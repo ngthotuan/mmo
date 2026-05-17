@@ -1,0 +1,44 @@
+import { apiClient } from "./client";
+import type { Channel, ListResponse } from "@/lib/types/api.types";
+
+export const channelsApi = {
+  list: async (): Promise<Channel[]> => {
+    const { data } = await apiClient.get<{ data: Channel[] }>("/api/v1/channels");
+    return data.data;
+  },
+
+  getAuthURL: async (platform: "tiktok" | "facebook"): Promise<string> => {
+    const { data } = await apiClient.get<{ auth_url: string }>(
+      `/api/v1/channels/connect/${platform}`
+    );
+    return data.auth_url;
+  },
+
+  connectTikTok: async (code: string): Promise<Channel> => {
+    const { data } = await apiClient.post<Channel>("/api/v1/channels/oauth/tiktok", { code });
+    return data;
+  },
+
+  connectFacebook: async (code: string, pageId: string): Promise<Channel> => {
+    const { data } = await apiClient.post<Channel>("/api/v1/channels/oauth/facebook", {
+      code,
+      page_id: pageId,
+    });
+    return data;
+  },
+
+  getFacebookPages: async (code: string) => {
+    const { data } = await apiClient.get<{
+      data: { id: string; name: string; access_token: string }[];
+    }>(`/api/v1/channels/facebook/pages?code=${encodeURIComponent(code)}`);
+    return data.data;
+  },
+
+  delete: async (id: string): Promise<void> => {
+    await apiClient.delete(`/api/v1/channels/${id}`);
+  },
+
+  toggle: async (id: string, active: boolean): Promise<void> => {
+    await apiClient.put(`/api/v1/channels/${id}/toggle`, { active });
+  },
+};
