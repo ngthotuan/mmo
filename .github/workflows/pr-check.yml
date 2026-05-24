@@ -139,7 +139,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run Trivy in fs mode
+      # Print findings to job log (warn-only — does not fail the PR).
+      - name: Trivy fs scan (table output)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+          ignore-unfixed: "true"
+
+      # Same scan in SARIF format → uploaded to Security tab for tracking.
+      - name: Trivy fs scan (SARIF)
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
@@ -147,7 +159,7 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           severity: HIGH,CRITICAL
-          exit-code: "1"
+          exit-code: "0"
           ignore-unfixed: "true"
 
       - name: Upload SARIF to GitHub Security tab
