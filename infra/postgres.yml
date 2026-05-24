@@ -1,0 +1,32 @@
+# Postgres — standalone compose. Self-contained, no .env dependency.
+#
+# Run:
+#   docker compose -f infra/postgres.yml up -d
+#
+# Sửa POSTGRES_PASSWORD trước khi chạy lần đầu. Sau khi data đã tồn tại,
+# đổi password phải đi qua psql (ALTER USER), không chỉ sửa file.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mmo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mmo
+      POSTGRES_USER: mmo
+      POSTGRES_PASSWORD: CHANGE_ME_strong_postgres_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "127.0.0.1:5432:5432"   # localhost only — app reach qua host.docker.internal
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mmo -d mmo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres_data:
+    name: mmo_postgres_data
