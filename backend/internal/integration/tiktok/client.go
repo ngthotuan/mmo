@@ -2,6 +2,9 @@ package tiktok
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +13,7 @@ import (
 	"strings"
 
 	"mmo/pkg/config"
+	"mmo/pkg/httpclient"
 )
 
 type Client struct {
@@ -41,29 +45,44 @@ func New(cfg config.TikTokConfig) *Client {
 		clientKey:    cfg.ClientKey,
 		clientSecret: cfg.ClientSecret,
 		redirectURL:  cfg.RedirectURL,
-		httpClient:   &http.Client{Timeout: cfg.HTTPTimeout},
+		httpClient:   httpclient.New("tiktok", cfg.HTTPTimeout),
 		api:          cfg.API,
 	}
 }
 
-func (c *Client) AuthURL(state string) string {
+// GeneratePKCE returns a (codeVerifier, codeChallenge) pair for PKCE S256.
+func GeneratePKCE() (verifier, challenge string, err error) {
+	b := make([]byte, 32)
+	if _, err = rand.Read(b); err != nil {
+		return
+	}
+	verifier = base64.RawURLEncoding.EncodeToString(b)
+	h := sha256.Sum256([]byte(verifier))
+	challenge = base64.RawURLEncoding.EncodeToString(h[:])
+	return
+}
+
+func (c *Client) AuthURL(state, codeChallenge string) string {
 	params := url.Values{
-		"client_key":    {c.clientKey},
-		"scope":         {"user.info.basic,video.upload,video.publish"},
-		"response_type": {"code"},
-		"redirect_uri":  {c.redirectURL},
-		"state":         {state},
+		"client_key":            {c.clientKey},
+		"scope":                 {"user.info.basic,video.upload,video.publish"},
+		"response_type":         {"code"},
+		"redirect_uri":          {c.redirectURL},
+		"state":                 {state},
+		"code_challenge":        {codeChallenge},
+		"code_challenge_method": {"S256"},
 	}
 	return c.api.AuthBaseURL + "?" + params.Encode()
 }
 
-func (c *Client) ExchangeCode(ctx context.Context, code string) (*Tokens, error) {
+func (c *Client) ExchangeCode(ctx context.Context, code, codeVerifier string) (*Tokens, error) {
 	body := url.Values{
 		"client_key":    {c.clientKey},
 		"client_secret": {c.clientSecret},
 		"code":          {code},
 		"grant_type":    {"authorization_code"},
 		"redirect_uri":  {c.redirectURL},
+		"code_verifier": {codeVerifier},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.api.TokenURL,
 		strings.NewReader(body.Encode()))

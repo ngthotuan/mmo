@@ -15,10 +15,11 @@ import (
 )
 
 type ScriptGenHandler struct {
-	trendRepo   *repository.TrendRepo
-	planRepo    *repository.ContentPlanRepo
-	gemini      *gemini.Client
-	queueClient *asynq.Client
+	trendRepo          *repository.TrendRepo
+	planRepo           *repository.ContentPlanRepo
+	gemini             *gemini.Client
+	queueClient        *asynq.Client
+	targetDurationSecs int
 }
 
 func NewScriptGenHandler(
@@ -26,12 +27,14 @@ func NewScriptGenHandler(
 	planRepo *repository.ContentPlanRepo,
 	geminiClient *gemini.Client,
 	queueClient *asynq.Client,
+	targetDurationSecs int,
 ) *ScriptGenHandler {
 	return &ScriptGenHandler{
-		trendRepo:   trendRepo,
-		planRepo:    planRepo,
-		gemini:      geminiClient,
-		queueClient: queueClient,
+		trendRepo:          trendRepo,
+		planRepo:           planRepo,
+		gemini:             geminiClient,
+		queueClient:        queueClient,
+		targetDurationSecs: targetDurationSecs,
 	}
 }
 
@@ -69,7 +72,7 @@ func (h *ScriptGenHandler) ProcessTask(ctx context.Context, task *asynq.Task) er
 	}
 	platform := p.Platforms[0]
 
-	result, err := h.gemini.GenerateScript(ctx, topic.Title, p.Niche, platform, 60)
+	result, err := h.gemini.GenerateScript(ctx, topic.Title, p.Niche, platform, h.targetDurationSecs)
 	if err != nil {
 		logger.Error("gemini script generation failed", zap.Error(err))
 		return err
@@ -105,7 +108,7 @@ func (h *ScriptGenHandler) ProcessTask(ctx context.Context, task *asynq.Task) er
 	if p.AutoApprove {
 		_ = h.planRepo.UpdateStatus(ctx, plan.ID, content.StatusApproved)
 		payload, _ := json.Marshal(map[string]string{"content_plan_id": plan.ID.String()})
-		mediaTask := asynq.NewTask(queue.TaskCollectMedia, payload, asynq.Queue(queue.QueueDefault))
+		mediaTask := asynq.NewTask(queue.TaskCollectMedia, payload, asynq.Queue(queue.QueueVideo))
 		if _, err := h.queueClient.EnqueueContext(ctx, mediaTask); err != nil {
 			logger.Warn("failed to enqueue media collection", zap.Error(err))
 		}

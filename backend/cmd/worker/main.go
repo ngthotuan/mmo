@@ -75,8 +75,8 @@ func main() {
 	// ─── Task handlers ───────────────────────────────────────────────────────
 	refreshHandler  := workerhandler.NewRefreshTokensHandler(channelRepo, tiktokClient, cfg.Auth.EncryptionKey)
 	discoverHandler := workerhandler.NewTrendDiscoveryHandler(trendRepo, cfg, googleClient, youtubeClient, redditClient)
-	scriptHandler   := workerhandler.NewScriptGenHandler(trendRepo, planRepo, geminiClient, queueClient)
-	mediaHandler    := workerhandler.NewMediaCollectHandler(planRepo, videoJobRepo, pexelsClient, pixabayClient, r2, queueClient, assembler, cfg.MediaCollect.HTTPTimeout)
+	scriptHandler   := workerhandler.NewScriptGenHandler(trendRepo, planRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs)
+	mediaHandler    := workerhandler.NewMediaCollectHandler(planRepo, videoJobRepo, pexelsClient, pixabayClient, r2, queueClient, assembler, cfg.MediaCollect.HTTPTimeout, cfg.Video.MaxClips)
 	ttsHandler      := workerhandler.NewTTSHandler(videoJobRepo, ttsClient, r2, queueClient, assembler)
 	assemblyHandler := workerhandler.NewVideoAssemblyHandler(videoJobRepo, assembler, r2, queueClient)
 	uploadHandler        := workerhandler.NewR2UploadHandler(videoJobRepo, planRepo, r2, assembler)
@@ -93,9 +93,9 @@ func main() {
 		mux.HandleFunc(queue.TaskRefreshTokens,  refreshHandler.ProcessTask)
 		mux.HandleFunc(queue.TaskDiscoverTrends, discoverHandler.ProcessTask)
 		mux.HandleFunc(queue.TaskGenerateScript, scriptHandler.ProcessTask)
-		mux.HandleFunc(queue.TaskCollectMedia,   mediaHandler.ProcessTask)
-		mux.HandleFunc(queue.TaskGenerateTTS,    ttsHandler.ProcessTask)
 	}
+	mux.HandleFunc(queue.TaskCollectMedia,   mediaHandler.ProcessTask)
+	mux.HandleFunc(queue.TaskGenerateTTS, ttsHandler.ProcessTask)
 	mux.HandleFunc(queue.TaskAssembleVideo, assemblyHandler.ProcessTask)
 	mux.HandleFunc(queue.TaskUploadToR2,    uploadHandler.ProcessTask)
 	mux.HandleFunc(queue.TaskPublishNow,    publishHandler.ProcessTask)

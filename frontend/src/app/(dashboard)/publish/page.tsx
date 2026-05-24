@@ -269,7 +269,7 @@ export default function PublishPage() {
   const { data, isLoading } = useQuery({
     queryKey: ["publish-jobs", statusFilter],
     queryFn: () => publishApi.list({ status: statusFilter || undefined }),
-    refetchInterval: 15_000,
+    refetchInterval: 60_000, // SSE in layout handles live updates
   });
 
   const publishNowMut = useMutation({
@@ -295,7 +295,7 @@ export default function PublishPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <Header title="Publish Queue" />
+      <Header title="Publish Queue" description="Schedule and monitor your content publishing jobs" />
 
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex gap-2 flex-wrap">

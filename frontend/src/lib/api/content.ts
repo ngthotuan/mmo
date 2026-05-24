@@ -31,7 +31,7 @@ export const contentApi = {
     return data;
   },
 
-  updatePlan: async (id: string, updates: Partial<Pick<ContentPlan, "title" | "script" | "notes">> & { niche?: string; target_platforms?: string[] }): Promise<ContentPlan> => {
+  updatePlan: async (id: string, updates: Partial<Pick<ContentPlan, "title" | "script" | "notes" | "voice">> & { niche?: string; target_platforms?: string[] }): Promise<ContentPlan> => {
     const { data } = await apiClient.put<ContentPlan>(`/api/v1/content/${id}`, updates);
     return data;
   },

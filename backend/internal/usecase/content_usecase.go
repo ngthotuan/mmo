@@ -15,10 +15,11 @@ import (
 )
 
 type ContentUsecase struct {
-	trendRepo   *repository.TrendRepo
-	planRepo    *repository.ContentPlanRepo
-	gemini      *gemini.Client
-	queueClient *asynq.Client
+	trendRepo          *repository.TrendRepo
+	planRepo           *repository.ContentPlanRepo
+	gemini             *gemini.Client
+	queueClient        *asynq.Client
+	targetDurationSecs int
 }
 
 func NewContentUsecase(
@@ -26,12 +27,14 @@ func NewContentUsecase(
 	planRepo *repository.ContentPlanRepo,
 	geminiClient *gemini.Client,
 	queueClient *asynq.Client,
+	targetDurationSecs int,
 ) *ContentUsecase {
 	return &ContentUsecase{
-		trendRepo:   trendRepo,
-		planRepo:    planRepo,
-		gemini:      geminiClient,
-		queueClient: queueClient,
+		trendRepo:          trendRepo,
+		planRepo:           planRepo,
+		gemini:             geminiClient,
+		queueClient:        queueClient,
+		targetDurationSecs: targetDurationSecs,
 	}
 }
 
@@ -67,8 +70,8 @@ func (uc *ContentUsecase) GetPlan(ctx context.Context, userID, planID uuid.UUID)
 	return plan, nil
 }
 
-// UpdatePlan allows editing title, script, notes, target_platforms.
-func (uc *ContentUsecase) UpdatePlan(ctx context.Context, userID, planID uuid.UUID, title, niche, script, notes string, platforms []string) (*content.ContentPlan, error) {
+// UpdatePlan allows editing title, script, notes, target_platforms, voice.
+func (uc *ContentUsecase) UpdatePlan(ctx context.Context, userID, planID uuid.UUID, title, niche, script, notes, voice string, platforms []string) (*content.ContentPlan, error) {
 	plan, err := uc.GetPlan(ctx, userID, planID)
 	if err != nil {
 		return nil, err
@@ -84,6 +87,9 @@ func (uc *ContentUsecase) UpdatePlan(ctx context.Context, userID, planID uuid.UU
 	}
 	if notes != "" {
 		plan.Notes = notes
+	}
+	if voice != "" {
+		plan.Voice = voice
 	}
 	if len(platforms) > 0 {
 		plan.TargetPlatforms = platforms
@@ -108,7 +114,7 @@ func (uc *ContentUsecase) ApprovePlan(ctx context.Context, userID, planID uuid.U
 	}
 	// Enqueue video creation pipeline
 	payload, _ := json.Marshal(map[string]string{"content_plan_id": planID.String()})
-	task := asynq.NewTask(queue.TaskCollectMedia, payload, asynq.Queue(queue.QueueDefault))
+	task := asynq.NewTask(queue.TaskCollectMedia, payload, asynq.Queue(queue.QueueVideo))
 	_, err = uc.queueClient.EnqueueContext(ctx, task)
 	return err
 }
@@ -133,7 +139,7 @@ func (uc *ContentUsecase) RegenerateScript(ctx context.Context, userID, planID u
 	}
 
 	result, err := uc.gemini.GenerateScript(ctx, plan.Title, plan.Niche,
-		firstPlatform(plan.TargetPlatforms), 60)
+		firstPlatform(plan.TargetPlatforms), uc.targetDurationSecs)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +177,7 @@ func (uc *ContentUsecase) GenerateScriptForTrend(ctx context.Context, userID, to
 		return nil, err
 	}
 
-	result, err := uc.gemini.GenerateScript(ctx, topic.Title, niche, firstPlatform(platforms), 60)
+	result, err := uc.gemini.GenerateScript(ctx, topic.Title, niche, firstPlatform(platforms), uc.targetDurationSecs)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +211,7 @@ func (uc *ContentUsecase) GenerateScriptForTrend(ctx context.Context, userID, to
 	if autoApprove {
 		_ = uc.planRepo.UpdateStatus(ctx, plan.ID, content.StatusApproved)
 		payload, _ := json.Marshal(map[string]string{"content_plan_id": plan.ID.String()})
-		task := asynq.NewTask(queue.TaskCollectMedia, payload, asynq.Queue(queue.QueueDefault))
+		task := asynq.NewTask(queue.TaskCollectMedia, payload, asynq.Queue(queue.QueueVideo))
 		_, _ = uc.queueClient.EnqueueContext(ctx, task)
 	}
 

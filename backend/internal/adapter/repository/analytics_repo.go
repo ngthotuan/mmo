@@ -48,11 +48,11 @@ func (r *AnalyticsRepo) GetByPublishJob(ctx context.Context, publishJobID uuid.U
 }
 
 type OverviewStats struct {
-	TotalViews    int64   `db:"total_views"`
-	TotalLikes    int64   `db:"total_likes"`
-	TotalComments int64   `db:"total_comments"`
-	TotalShares   int64   `db:"total_shares"`
-	PostCount     int     `db:"post_count"`
+	TotalViews    int64 `db:"total_views"    json:"total_views"`
+	TotalLikes    int64 `db:"total_likes"    json:"total_likes"`
+	TotalComments int64 `db:"total_comments" json:"total_comments"`
+	TotalShares   int64 `db:"total_shares"   json:"total_shares"`
+	PostCount     int   `db:"post_count"     json:"post_count"`
 }
 
 func (r *AnalyticsRepo) Overview(ctx context.Context, userID uuid.UUID, since time.Time) (*OverviewStats, error) {
@@ -74,13 +74,37 @@ func (r *AnalyticsRepo) Overview(ctx context.Context, userID uuid.UUID, since ti
 }
 
 type PostAnalyticsSummary struct {
-	PublishJobID uuid.UUID `db:"publish_job_id"`
-	Platform     string    `db:"platform"`
-	SyncedAt     time.Time `db:"synced_at"`
-	Views        int64     `db:"views"`
-	Likes        int64     `db:"likes"`
-	Comments     int64     `db:"comments"`
-	Shares       int64     `db:"shares"`
+	PublishJobID uuid.UUID `db:"publish_job_id" json:"publish_job_id"`
+	Platform     string    `db:"platform"       json:"platform"`
+	SyncedAt     time.Time `db:"synced_at"      json:"synced_at"`
+	Views        int64     `db:"views"          json:"views"`
+	Likes        int64     `db:"likes"          json:"likes"`
+	Comments     int64     `db:"comments"       json:"comments"`
+	Shares       int64     `db:"shares"         json:"shares"`
+}
+
+type TimeseriesPoint struct {
+	Date     string `db:"day"         json:"date"`
+	Views    int64  `db:"total_views" json:"views"`
+	Likes    int64  `db:"total_likes" json:"likes"`
+	Comments int64  `db:"total_comments" json:"comments"`
+}
+
+func (r *AnalyticsRepo) Timeseries(ctx context.Context, userID uuid.UUID, since time.Time) ([]TimeseriesPoint, error) {
+	var rows []TimeseriesPoint
+	err := r.db.SelectContext(ctx, &rows, `
+		SELECT
+			TO_CHAR(a.synced_at::date, 'YYYY-MM-DD') AS day,
+			COALESCE(SUM(a.views),0)    AS total_views,
+			COALESCE(SUM(a.likes),0)    AS total_likes,
+			COALESCE(SUM(a.comments),0) AS total_comments
+		FROM post_analytics a
+		JOIN publish_jobs pj ON pj.id = a.publish_job_id
+		JOIN channels c ON c.id = pj.channel_id
+		WHERE c.user_id = $1 AND a.synced_at >= $2
+		GROUP BY a.synced_at::date
+		ORDER BY a.synced_at::date ASC`, userID, since)
+	return rows, err
 }
 
 func (r *AnalyticsRepo) ListPosts(ctx context.Context, userID uuid.UUID, page, perPage int) ([]PostAnalyticsSummary, int, error) {
@@ -94,7 +118,7 @@ func (r *AnalyticsRepo) ListPosts(ctx context.Context, userID uuid.UUID, page, p
 	}
 
 	offset := (page - 1) * perPage
-	var rows []PostAnalyticsSummary
+	rows := make([]PostAnalyticsSummary, 0)
 	err := r.db.SelectContext(ctx, &rows, `
 		SELECT a.publish_job_id, a.platform, a.synced_at, a.views, a.likes, a.comments, a.shares
 		FROM post_analytics a

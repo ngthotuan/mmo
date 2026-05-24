@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"mmo/internal/domain/content"
 	"mmo/internal/usecase"
 	apperr "mmo/pkg/errors"
 	"mmo/pkg/util"
@@ -19,6 +20,40 @@ func NewContentHandler(uc *usecase.ContentUsecase) *ContentHandler {
 	return &ContentHandler{uc: uc}
 }
 
+type planDTO struct {
+	ID              uuid.UUID       `json:"id"`
+	Title           string          `json:"title"`
+	Niche           string          `json:"niche"`
+	TargetPlatforms []string        `json:"target_platforms"`
+	Script          string          `json:"script"`
+	ScriptMetadata  json.RawMessage `json:"script_metadata"`
+	Status          string          `json:"status"`
+	AutoApprove     bool            `json:"auto_approve"`
+	Voice           string          `json:"voice"`
+	Notes           string          `json:"notes"`
+	CreatedAt       string          `json:"created_at"`
+}
+
+func toPlanDTO(p *content.ContentPlan) planDTO {
+	platforms := p.TargetPlatforms
+	if platforms == nil {
+		platforms = []string{}
+	}
+	return planDTO{
+		ID:              p.ID,
+		Title:           p.Title,
+		Niche:           p.Niche,
+		TargetPlatforms: platforms,
+		Script:          p.Script,
+		ScriptMetadata:  p.ScriptMetadata,
+		Status:          string(p.Status),
+		AutoApprove:     p.AutoApprove,
+		Voice:           p.Voice,
+		Notes:           p.Notes,
+		CreatedAt:       p.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+}
+
 // GET /trends
 func (h *ContentHandler) ListTrends(c *gin.Context) {
 	userID := mustParseUserID(c)
@@ -30,8 +65,39 @@ func (h *ContentHandler) ListTrends(c *gin.Context) {
 		respondErr(c, err)
 		return
 	}
+
+	type trendDTO struct {
+		ID            uuid.UUID `json:"id"`
+		Source        string    `json:"source"`
+		Title         string    `json:"title"`
+		Description   string    `json:"description"`
+		Keywords      []string  `json:"keywords"`
+		TrendingScore float64   `json:"trending_score"`
+		SourceURL     string    `json:"source_url"`
+		Status        string    `json:"status"`
+		DiscoveredAt  string    `json:"discovered_at"`
+	}
+
+	dtos := make([]trendDTO, len(trends))
+	for i, t := range trends {
+		dtos[i] = trendDTO{
+			ID:            t.ID,
+			Source:        t.Source,
+			Title:         t.Title,
+			Description:   t.Description,
+			Keywords:      t.Keywords,
+			TrendingScore: t.TrendingScore,
+			SourceURL:     t.SourceURL,
+			Status:        t.Status,
+			DiscoveredAt:  t.DiscoveredAt.Format("2006-01-02T15:04:05Z"),
+		}
+		if dtos[i].Keywords == nil {
+			dtos[i].Keywords = []string{}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"data":       trends,
+		"data":       dtos,
 		"pagination": gin.H{"total": total, "page": p.Page, "per_page": p.PerPage},
 	})
 }
@@ -58,33 +124,9 @@ func (h *ContentHandler) ListPlans(c *gin.Context) {
 		return
 	}
 
-	type planDTO struct {
-		ID             uuid.UUID       `json:"id"`
-		Title          string          `json:"title"`
-		Niche          string          `json:"niche"`
-		TargetPlatforms []string       `json:"target_platforms"`
-		Script         string          `json:"script"`
-		ScriptMetadata json.RawMessage `json:"script_metadata"`
-		Status         string          `json:"status"`
-		AutoApprove    bool            `json:"auto_approve"`
-		Notes          string          `json:"notes"`
-		CreatedAt      string          `json:"created_at"`
-	}
-
 	dtos := make([]planDTO, len(plans))
 	for i, plan := range plans {
-		dtos[i] = planDTO{
-			ID:              plan.ID,
-			Title:           plan.Title,
-			Niche:           plan.Niche,
-			TargetPlatforms: plan.TargetPlatforms,
-			Script:          plan.Script,
-			ScriptMetadata:  plan.ScriptMetadata,
-			Status:          string(plan.Status),
-			AutoApprove:     plan.AutoApprove,
-			Notes:           plan.Notes,
-			CreatedAt:       plan.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		}
+		dtos[i] = toPlanDTO(plan)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"data":       dtos,
@@ -105,7 +147,7 @@ func (h *ContentHandler) GetPlan(c *gin.Context) {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, plan)
+	c.JSON(http.StatusOK, toPlanDTO(plan))
 }
 
 // PUT /content/:id
@@ -121,6 +163,7 @@ func (h *ContentHandler) UpdatePlan(c *gin.Context) {
 		Niche           string   `json:"niche"`
 		Script          string   `json:"script"`
 		Notes           string   `json:"notes"`
+		Voice           string   `json:"voice"`
 		TargetPlatforms []string `json:"target_platforms"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -128,12 +171,12 @@ func (h *ContentHandler) UpdatePlan(c *gin.Context) {
 		return
 	}
 	plan, err := h.uc.UpdatePlan(c.Request.Context(), userID, planID,
-		body.Title, body.Niche, body.Script, body.Notes, body.TargetPlatforms)
+		body.Title, body.Niche, body.Script, body.Notes, body.Voice, body.TargetPlatforms)
 	if err != nil {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, plan)
+	c.JSON(http.StatusOK, toPlanDTO(plan))
 }
 
 // POST /content/:id/approve
@@ -179,7 +222,7 @@ func (h *ContentHandler) RegenerateScript(c *gin.Context) {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, plan)
+	c.JSON(http.StatusOK, toPlanDTO(plan))
 }
 
 // POST /content/from-trend
@@ -209,7 +252,7 @@ func (h *ContentHandler) CreateFromTrend(c *gin.Context) {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, plan)
+	c.JSON(http.StatusCreated, toPlanDTO(plan))
 }
 
 // DELETE /content/:id

@@ -33,6 +33,7 @@ type MediaCollectHandler struct {
 	queueClient *asynq.Client
 	httpClient  *http.Client
 	assembler   *ffmpeg.Assembler
+	maxClips    int
 }
 
 type mediaAssetJSON struct {
@@ -51,7 +52,11 @@ func NewMediaCollectHandler(
 	queueClient *asynq.Client,
 	assembler *ffmpeg.Assembler,
 	httpTimeout time.Duration,
+	maxClips int,
 ) *MediaCollectHandler {
+	if maxClips <= 0 {
+		maxClips = 15
+	}
 	return &MediaCollectHandler{
 		planRepo:    planRepo,
 		videoRepo:   videoRepo,
@@ -61,6 +66,7 @@ func NewMediaCollectHandler(
 		queueClient: queueClient,
 		httpClient:  &http.Client{Timeout: httpTimeout},
 		assembler:   assembler,
+		maxClips:    maxClips,
 	}
 }
 
@@ -88,6 +94,7 @@ func (h *MediaCollectHandler) ProcessTask(ctx context.Context, task *asynq.Task)
 		ID:            jobID,
 		ContentPlanID: planID,
 		Status:        video.JobStatusMediaCollecting,
+		MediaAssets:   []byte("[]"),
 	}
 	if err := h.videoRepo.Create(ctx, job); err != nil {
 		return fmt.Errorf("create video job: %w", err)
@@ -98,12 +105,10 @@ func (h *MediaCollectHandler) ProcessTask(ctx context.Context, task *asynq.Task)
 
 	logger.Info("collecting media", zap.String("job_id", jobID.String()), zap.String("title", plan.Title))
 
-	// Extract keywords for media search
-	keywords := extractKeywordsFromTitle(plan.Title)
-	query := keywords[0]
-	if len(keywords) > 1 {
-		query = strings.Join(keywords[:2], " ")
-	}
+	// Build a small set of diverse queries from the title so the b-roll has
+	// visual variety instead of 15 takes of the same scene.
+	queries := buildSearchQueries(plan.Title)
+	target := h.maxClips
 
 	tmpDir, err := h.assembler.TempDir(jobID.String())
 	if err != nil {
@@ -111,70 +116,85 @@ func (h *MediaCollectHandler) ProcessTask(ctx context.Context, task *asynq.Task)
 	}
 
 	var assets []mediaAssetJSON
-
-	// Try Pexels videos first
-	videos, err := h.pexels.SearchVideos(ctx, query, 3)
-	if err != nil {
-		logger.Warn("pexels failed, trying pixabay", zap.Error(err))
-	}
-	for i, v := range videos {
-		if len(assets) >= 3 {
+	clipIdx := 0
+	// Pexels: search per-query, take up to ceil(target/len(queries)) per query
+	perQuery := target/len(queries) + 1
+	for _, q := range queries {
+		if len(assets) >= target {
 			break
 		}
-		videoURL := pexels.BestVideoURL(v)
-		if videoURL == "" {
-			continue
-		}
-		localPath := filepath.Join(tmpDir, fmt.Sprintf("clip_%d.mp4", i))
-		if err := downloadFile(ctx, h.httpClient, videoURL, localPath); err != nil {
-			logger.Warn("download clip failed", zap.Error(err))
-			continue
-		}
-		r2Key := fmt.Sprintf("media/videos/%s/clip_%d.mp4", jobID, i)
-		assets = append(assets, mediaAssetJSON{
-			Type:     "video",
-			URL:      videoURL,
-			R2Key:    r2Key,
-			Duration: float64(v.Duration),
-		})
-	}
-
-	// Fallback to Pixabay if not enough assets
-	if len(assets) < 3 {
-		pbVideos, err := h.pixabay.SearchVideos(ctx, query, 3)
+		videos, err := h.pexels.SearchVideos(ctx, q, perQuery)
 		if err != nil {
-			logger.Warn("pixabay failed", zap.Error(err))
+			logger.Warn("pexels failed", zap.String("query", q), zap.Error(err))
+			continue
 		}
-		for i, v := range pbVideos {
-			if len(assets) >= 3 {
+		for _, v := range videos {
+			if len(assets) >= target {
 				break
 			}
-			videoURL := v.Videos.Large.URL
-			if videoURL == "" {
-				videoURL = v.Videos.Medium.URL
-			}
+			videoURL := pexels.BestVideoURL(v)
 			if videoURL == "" {
 				continue
 			}
-			localPath := filepath.Join(tmpDir, fmt.Sprintf("pbclip_%d.mp4", i))
+			localPath := filepath.Join(tmpDir, fmt.Sprintf("clip_%d.mp4", clipIdx))
 			if err := downloadFile(ctx, h.httpClient, videoURL, localPath); err != nil {
+				logger.Warn("download clip failed", zap.String("url", videoURL), zap.Error(err))
 				continue
 			}
-			r2Key := fmt.Sprintf("media/videos/%s/pbclip_%d.mp4", jobID, i)
+			r2Key := fmt.Sprintf("media/videos/%s/clip_%d.mp4", jobID, clipIdx)
 			assets = append(assets, mediaAssetJSON{
 				Type:     "video",
 				URL:      videoURL,
 				R2Key:    r2Key,
 				Duration: float64(v.Duration),
 			})
+			clipIdx++
 		}
 	}
 
-	// Fall back to Pexels photos if still no video
+	// Pixabay fallback / supplement if still short
+	if len(assets) < target {
+		for _, q := range queries {
+			if len(assets) >= target {
+				break
+			}
+			pbVideos, err := h.pixabay.SearchVideos(ctx, q, perQuery)
+			if err != nil {
+				logger.Warn("pixabay failed", zap.String("query", q), zap.Error(err))
+				continue
+			}
+			for _, v := range pbVideos {
+				if len(assets) >= target {
+					break
+				}
+				videoURL := v.Videos.Large.URL
+				if videoURL == "" {
+					videoURL = v.Videos.Medium.URL
+				}
+				if videoURL == "" {
+					continue
+				}
+				localPath := filepath.Join(tmpDir, fmt.Sprintf("clip_%d.mp4", clipIdx))
+				if err := downloadFile(ctx, h.httpClient, videoURL, localPath); err != nil {
+					continue
+				}
+				r2Key := fmt.Sprintf("media/videos/%s/clip_%d.mp4", jobID, clipIdx)
+				assets = append(assets, mediaAssetJSON{
+					Type:     "video",
+					URL:      videoURL,
+					R2Key:    r2Key,
+					Duration: float64(v.Duration),
+				})
+				clipIdx++
+			}
+		}
+	}
+
+	// Last-resort: photos for slideshow
 	if len(assets) == 0 {
-		photos, _ := h.pexels.SearchPhotos(ctx, query, 5)
+		photos, _ := h.pexels.SearchPhotos(ctx, queries[0], target)
 		for i, ph := range photos {
-			if len(assets) >= 5 {
+			if len(assets) >= target {
 				break
 			}
 			imgURL := ph.Src.Large
@@ -204,8 +224,9 @@ func (h *MediaCollectHandler) ProcessTask(ctx context.Context, task *asynq.Task)
 		"job_id":  jobID.String(),
 		"plan_id": planID.String(),
 		"script":  plan.Script,
+		"voice":   plan.Voice,
 	})
-	ttsTask := asynq.NewTask(queue.TaskGenerateTTS, ttsPayload, asynq.Queue(queue.QueueDefault))
+	ttsTask := asynq.NewTask(queue.TaskGenerateTTS, ttsPayload, asynq.Queue(queue.QueueVideo))
 	if _, err := h.queueClient.EnqueueContext(ctx, ttsTask); err != nil {
 		logger.Error("failed to enqueue TTS task", zap.Error(err))
 		return err
@@ -234,6 +255,35 @@ func downloadFile(ctx context.Context, client *http.Client, url, dest string) er
 	defer f.Close()
 	_, err = io.Copy(f, resp.Body)
 	return err
+}
+
+// buildSearchQueries returns 3-5 distinct search terms derived from the title,
+// plus generic fallbacks. Diverse queries → diverse b-roll.
+func buildSearchQueries(title string) []string {
+	kw := extractKeywordsFromTitle(title)
+	var qs []string
+	if len(kw) >= 2 {
+		qs = append(qs, strings.Join(kw[:2], " "))
+	}
+	for _, w := range kw {
+		if len(qs) >= 5 {
+			break
+		}
+		qs = append(qs, w)
+	}
+	// Always include a generic visual fallback so long videos have b-roll variety.
+	qs = append(qs, "technology", "people working", "city lights")
+	seen := map[string]bool{}
+	out := qs[:0]
+	for _, q := range qs {
+		q = strings.TrimSpace(q)
+		if q == "" || seen[q] {
+			continue
+		}
+		seen[q] = true
+		out = append(out, q)
+	}
+	return out
 }
 
 func extractKeywordsFromTitle(title string) []string {

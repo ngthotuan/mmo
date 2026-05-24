@@ -44,6 +44,38 @@ func Auth(jwtSecret string) gin.HandlerFunc {
 	}
 }
 
+// AuthSSE accepts a JWT from the Authorization header OR the ?token= query param.
+// EventSource API in browsers cannot set custom headers, so SSE endpoints need this.
+func AuthSSE(jwtSecret string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tokenStr := ""
+		if t, ok := strings.CutPrefix(c.GetHeader("Authorization"), "Bearer "); ok {
+			tokenStr = t
+		} else {
+			tokenStr = c.Query("token")
+		}
+		if tokenStr == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, apperr.ErrUnauthorized)
+			return
+		}
+
+		claims := &Claims{}
+		token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
+			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, apperr.ErrInvalidToken
+			}
+			return []byte(jwtSecret), nil
+		})
+		if err != nil || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, apperr.ErrInvalidToken)
+			return
+		}
+
+		c.Set(claimsKey, claims)
+		c.Next()
+	}
+}
+
 func GetClaims(c *gin.Context) *Claims {
 	v, _ := c.Get(claimsKey)
 	claims, _ := v.(*Claims)

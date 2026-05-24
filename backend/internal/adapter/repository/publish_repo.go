@@ -19,6 +19,47 @@ type PublishJobRepo struct{ db *sqlx.DB }
 
 func NewPublishJobRepo(db *sqlx.DB) *PublishJobRepo { return &PublishJobRepo{db: db} }
 
+// publishJobRow is a scan target that handles TEXT[] → []string via pq.StringArray.
+type publishJobRow struct {
+	ID              uuid.UUID         `db:"id"`
+	VideoJobID      uuid.UUID         `db:"video_job_id"`
+	ChannelID       uuid.UUID         `db:"channel_id"`
+	ContentPlanID   *uuid.UUID        `db:"content_plan_id"`
+	Platform        string            `db:"platform"`
+	Caption         string            `db:"caption"`
+	Hashtags        pq.StringArray    `db:"hashtags"`
+	ScheduledAt     *time.Time        `db:"scheduled_at"`
+	PublishedAt     *time.Time        `db:"published_at"`
+	PlatformPostID  string            `db:"platform_post_id"`
+	PlatformPostURL string            `db:"platform_post_url"`
+	Status          publish.JobStatus `db:"status"`
+	RetryCount      int               `db:"retry_count"`
+	ErrorMessage    string            `db:"error_message"`
+	CreatedAt       time.Time         `db:"created_at"`
+	UpdatedAt       time.Time         `db:"updated_at"`
+}
+
+func (row publishJobRow) toEntity() *publish.Job {
+	return &publish.Job{
+		ID:              row.ID,
+		VideoJobID:      row.VideoJobID,
+		ChannelID:       row.ChannelID,
+		ContentPlanID:   row.ContentPlanID,
+		Platform:        row.Platform,
+		Caption:         row.Caption,
+		Hashtags:        []string(row.Hashtags),
+		ScheduledAt:     row.ScheduledAt,
+		PublishedAt:     row.PublishedAt,
+		PlatformPostID:  row.PlatformPostID,
+		PlatformPostURL: row.PlatformPostURL,
+		Status:          row.Status,
+		RetryCount:      row.RetryCount,
+		ErrorMessage:    row.ErrorMessage,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}
+}
+
 func (r *PublishJobRepo) Create(ctx context.Context, j *publish.Job) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO publish_jobs
@@ -34,14 +75,14 @@ func (r *PublishJobRepo) Create(ctx context.Context, j *publish.Job) error {
 }
 
 func (r *PublishJobRepo) GetByID(ctx context.Context, id uuid.UUID) (*publish.Job, error) {
-	var j publish.Job
-	if err := r.db.GetContext(ctx, &j, `SELECT * FROM publish_jobs WHERE id = $1`, id); err != nil {
+	var row publishJobRow
+	if err := r.db.GetContext(ctx, &row, `SELECT * FROM publish_jobs WHERE id = $1`, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, apperr.ErrNotFound
 		}
 		return nil, err
 	}
-	return &j, nil
+	return row.toEntity(), nil
 }
 
 func (r *PublishJobRepo) List(ctx context.Context, channelID *uuid.UUID, status publish.JobStatus, p util.Pagination) ([]*publish.Job, int, error) {
@@ -65,12 +106,16 @@ func (r *PublishJobRepo) List(ctx context.Context, channelID *uuid.UUID, status 
 	}
 
 	args = append(args, p.Limit(), p.Offset())
-	jobs := []*publish.Job{}
-	if err := r.db.SelectContext(ctx, &jobs,
+	var rows []publishJobRow
+	if err := r.db.SelectContext(ctx, &rows,
 		fmt.Sprintf("SELECT * FROM publish_jobs WHERE %s ORDER BY scheduled_at DESC LIMIT $%d OFFSET $%d",
 			where, len(args)-1, len(args)), args...,
 	); err != nil {
 		return nil, 0, err
+	}
+	jobs := make([]*publish.Job, len(rows))
+	for i, row := range rows {
+		jobs[i] = row.toEntity()
 	}
 	return jobs, total, nil
 }
@@ -99,28 +144,40 @@ func (r *PublishJobRepo) UpdateStatus(ctx context.Context, id uuid.UUID, status 
 }
 
 func (r *PublishJobRepo) ListDue(ctx context.Context, before time.Time) ([]*publish.Job, error) {
-	jobs := []*publish.Job{}
-	err := r.db.SelectContext(ctx, &jobs, `
+	var rows []publishJobRow
+	if err := r.db.SelectContext(ctx, &rows, `
 		SELECT * FROM publish_jobs
 		WHERE status = 'scheduled' AND scheduled_at <= $1
 		ORDER BY scheduled_at ASC
 		LIMIT 50`,
 		before,
-	)
-	return jobs, err
+	); err != nil {
+		return nil, err
+	}
+	jobs := make([]*publish.Job, len(rows))
+	for i, row := range rows {
+		jobs[i] = row.toEntity()
+	}
+	return jobs, nil
 }
 
 func (r *PublishJobRepo) ListByDateRange(ctx context.Context, userID uuid.UUID, start, end time.Time) ([]*publish.Job, error) {
-	jobs := []*publish.Job{}
-	err := r.db.SelectContext(ctx, &jobs, `
+	var rows []publishJobRow
+	if err := r.db.SelectContext(ctx, &rows, `
 		SELECT * FROM publish_jobs
 		WHERE channel_id IN (SELECT id FROM channels WHERE user_id = $1)
 		  AND scheduled_at >= $2
 		  AND scheduled_at <= $3
 		ORDER BY scheduled_at ASC`,
 		userID, start, end,
-	)
-	return jobs, err
+	); err != nil {
+		return nil, err
+	}
+	jobs := make([]*publish.Job, len(rows))
+	for i, row := range rows {
+		jobs[i] = row.toEntity()
+	}
+	return jobs, nil
 }
 
 func (r *PublishJobRepo) Delete(ctx context.Context, id uuid.UUID) error {

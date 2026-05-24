@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { User, KeyRound, Info } from "lucide-react";
+import { User, KeyRound, Info, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { Header } from "@/components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { authApi } from "@/lib/api/auth";
+
+export const AUTO_APPROVE_KEY = "pipeline_auto_approve";
 
 export default function SettingsPage() {
   const qc = useQueryClient();
@@ -31,6 +34,17 @@ export default function SettingsPage() {
     onError: () => toast.error("Failed to update profile"),
   });
 
+  // Pipeline settings
+  const [autoApprove, setAutoApprove] = useState(false);
+  useEffect(() => {
+    setAutoApprove(localStorage.getItem(AUTO_APPROVE_KEY) === "true");
+  }, []);
+  const toggleAutoApprove = (val: boolean) => {
+    setAutoApprove(val);
+    localStorage.setItem(AUTO_APPROVE_KEY, String(val));
+    toast.success(val ? "Auto-approve enabled" : "Auto-approve disabled");
+  };
+
   // Password form
   const [pw, setPw] = useState({ current: "", next: "", confirm: "" });
   const passwordMut = useMutation({
@@ -48,7 +62,7 @@ export default function SettingsPage() {
   if (isLoading) {
     return (
       <div className="flex flex-col gap-6 p-6">
-        <Header title="Settings" />
+        <Header title="Settings" description="Manage your account and pipeline preferences" />
         <Skeleton className="h-48 rounded-lg" />
         <Skeleton className="h-56 rounded-lg" />
       </div>
@@ -57,7 +71,7 @@ export default function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-2xl">
-      <Header title="Settings" />
+      <Header title="Settings" description="Manage your account and pipeline preferences" />
 
       {/* Profile */}
       <Card>
@@ -131,6 +145,25 @@ export default function SettingsPage() {
           >
             {passwordMut.isPending ? "Changing…" : "Change Password"}
           </Button>
+        </CardContent>
+      </Card>
+
+      {/* Pipeline settings */}
+      <Card>
+        <CardHeader className="flex flex-row items-center gap-2">
+          <Settings2 className="h-4 w-4 text-muted-foreground" />
+          <CardTitle className="text-base">Pipeline Settings</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-0.5">
+              <Label className="text-sm">Auto-approve scripts</Label>
+              <span className="text-xs text-muted-foreground">
+                Automatically approve generated scripts and start video creation without manual review
+              </span>
+            </div>
+            <Switch checked={autoApprove} onCheckedChange={toggleAutoApprove} />
+          </div>
         </CardContent>
       </Card>
 

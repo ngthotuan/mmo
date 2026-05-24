@@ -147,6 +147,11 @@ func (a *Assembler) AssembleBRoll(ctx context.Context, clips []MediaAsset, audio
 	ts := fmt.Sprintf("%d", time.Now().UnixNano())
 	outputPath := filepath.Join(outputDir, "video_"+ts+".mp4")
 
+	// Repeat the clip list enough times to cover the narration audio. The
+	// concat filter just plays whichever inputs we hand it, so duplicating
+	// the slice cycles the b-roll instead of cutting the video short.
+	clips = repeatClipsToFitAudio(ctx, a.ffmpegBin, clips, audioPath)
+
 	var args []string
 	for _, c := range clips {
 		args = append(args, "-i", c.Path)
@@ -182,6 +187,35 @@ func (a *Assembler) AssembleBRoll(ctx context.Context, clips []MediaAsset, audio
 	)
 
 	return a.run(ctx, args, outputPath)
+}
+
+// repeatClipsToFitAudio duplicates the clip slice until total clip runtime
+// matches or exceeds the audio length. `-shortest` then trims the excess.
+func repeatClipsToFitAudio(ctx context.Context, ffmpegBin string, clips []MediaAsset, audioPath string) []MediaAsset {
+	audioDur := probeDuration(ctx, ffmpegBin, audioPath)
+	if audioDur <= 0 {
+		return clips
+	}
+	var clipTotal float64
+	for _, c := range clips {
+		d := c.Duration
+		if d <= 0 {
+			d = probeDuration(ctx, ffmpegBin, c.Path)
+			if d > 0 {
+				c.Duration = d
+			}
+		}
+		clipTotal += d
+	}
+	if clipTotal <= 0 || clipTotal >= audioDur {
+		return clips
+	}
+	repeats := int(audioDur/clipTotal) + 1
+	out := make([]MediaAsset, 0, len(clips)*repeats)
+	for i := 0; i < repeats; i++ {
+		out = append(out, clips...)
+	}
+	return out
 }
 
 func (a *Assembler) run(ctx context.Context, args []string, outputPath string) (*AssembleResult, error) {

@@ -29,7 +29,7 @@ func NewServer(redisURL string, videoOnly bool, queueCfg config.QueueConfig) *as
 
 	concurrency := queueCfg.GeneralConcurrency
 	if videoOnly {
-		queues = map[string]int{QueueDefault: 1}
+		queues = map[string]int{QueueVideo: queueCfg.VideoConcurrency}
 		concurrency = queueCfg.VideoConcurrency
 	}
 

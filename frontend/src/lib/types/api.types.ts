@@ -48,12 +48,12 @@ export interface Channel {
 
 export interface TrendTopic {
   id: string;
-  source: string;
+  source?: string;
   title: string;
-  description: string;
+  description?: string;
   keywords: string[];
   trending_score: number;
-  source_url: string;
+  source_url?: string;
   status: string;
   discovered_at: string;
 }
@@ -72,6 +72,7 @@ export interface ContentPlan {
   };
   status: ContentStatus;
   auto_approve: boolean;
+  voice: string;
   notes: string;
   created_at: string;
   updated_at: string;

@@ -45,6 +45,10 @@ func (c *Client) FetchDailyTrends(ctx context.Context, geo string) ([]Trend, err
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("google trends request: unexpected status %d", resp.StatusCode)
+	}
+
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -52,6 +56,10 @@ func (c *Client) FetchDailyTrends(ctx context.Context, geo string) ([]Trend, err
 
 	body := strings.TrimPrefix(string(raw), ")]}'")
 	body = strings.TrimSpace(body)
+
+	if strings.HasPrefix(body, "<") {
+		return nil, fmt.Errorf("google trends returned HTML (likely blocked or CAPTCHA)")
+	}
 
 	var data struct {
 		Default struct {
@@ -80,28 +88,28 @@ func (c *Client) FetchDailyTrends(ctx context.Context, geo string) ([]Trend, err
 	}
 
 	var trends []Trend
-	for _, day := range data.Default.TrendingSearchesDays {
-		for _, ts := range day.TrendingSearches {
-			keywords := []string{ts.Title.Query}
-			for _, rq := range ts.RelatedQueries {
-				keywords = append(keywords, rq.Query)
-			}
-
-			desc := ""
-			sourceURL := ""
-			if len(ts.Articles) > 0 {
-				desc = ts.Articles[0].Title
-				sourceURL = ts.Articles[0].URL
-			}
-
-			trends = append(trends, Trend{
-				Title:       ts.Title.Query,
-				Description: desc,
-				Keywords:    keywords,
-				SourceURL:   sourceURL,
-			})
+	if len(data.Default.TrendingSearchesDays) == 0 {
+		return trends, nil
+	}
+	for _, ts := range data.Default.TrendingSearchesDays[0].TrendingSearches {
+		keywords := []string{ts.Title.Query}
+		for _, rq := range ts.RelatedQueries {
+			keywords = append(keywords, rq.Query)
 		}
-		break
+
+		desc := ""
+		sourceURL := ""
+		if len(ts.Articles) > 0 {
+			desc = ts.Articles[0].Title
+			sourceURL = ts.Articles[0].URL
+		}
+
+		trends = append(trends, Trend{
+			Title:       ts.Title.Query,
+			Description: desc,
+			Keywords:    keywords,
+			SourceURL:   sourceURL,
+		})
 	}
 	return trends, nil
 }

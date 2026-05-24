@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"mmo/internal/adapter/handler"
 	"mmo/internal/adapter/repository"
 	infradb "mmo/internal/infrastructure/db"
@@ -59,14 +60,22 @@ func main() {
 	queueClient := infraqueue.NewClient(cfg.Redis.URL)
 	defer queueClient.Close()
 
+	// ─── Redis client (PKCE store, etc.) ─────────────────────────────────────
+	redisOpt, err := redis.ParseURL(cfg.Redis.URL)
+	if err != nil {
+		logger.Fatal("invalid redis URL", zap.Error(err))
+	}
+	redisClient := redis.NewClient(redisOpt)
+	defer redisClient.Close()
+
 	// ─── Integration clients ─────────────────────────────────────────────────
 	tiktokClient   := tiktok.New(cfg.TikTok)
 	facebookClient := facebook.New(cfg.Facebook)
 	geminiClient   := gemini.New(cfg.Gemini)
 
 	// ─── Use cases ───────────────────────────────────────────────────────────
-	channelUC  := usecase.NewChannelUsecase(channelRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey, cfg.Channel.FacebookTokenExpiry)
-	contentUC  := usecase.NewContentUsecase(trendRepo, contentPlanRepo, geminiClient, queueClient)
+	channelUC  := usecase.NewChannelUsecase(channelRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey, cfg.Channel.FacebookTokenExpiry, redisClient)
+	contentUC  := usecase.NewContentUsecase(trendRepo, contentPlanRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs)
 	videoUC    := usecase.NewVideoUsecase(videoJobRepo, videoTemplRepo, r2, queueClient, cfg.Video.PresignedURLTTL)
 	publishUC   := usecase.NewPublishUsecase(publishRepo, videoJobRepo, channelRepo, queueClient, cfg.Publish.MinScheduleBeforeNow)
 	analyticsUC := usecase.NewAnalyticsUsecase(analyticsRepo)
@@ -86,6 +95,7 @@ func main() {
 	// ─── Router ──────────────────────────────────────────────────────────────
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(middleware.Logger())
 	r.Use(middleware.CORS(cfg.App.FrontendURL))
 
 	r.GET("/health", healthHandler.Check)
@@ -157,10 +167,14 @@ func main() {
 			protected.GET("/calendar", publishHandler.Calendar)
 
 			// ─── Analytics ───────────────────────────────────────────────────
-			protected.GET("/analytics/overview", analyticsHandler.Overview)
-			protected.GET("/analytics/posts",    analyticsHandler.ListPosts)
+			protected.GET("/analytics/overview",    analyticsHandler.Overview)
+			protected.GET("/analytics/posts",       analyticsHandler.ListPosts)
+			protected.GET("/analytics/timeseries",  analyticsHandler.Timeseries)
 
 			protected.GET("/pipeline/status", pipelineHandler.Status)
+
+			// SSE — EventSource can't set headers, so token is accepted via ?token= query param
+			v1.GET("/pipeline/events", middleware.AuthSSE(cfg.Auth.JWTSecret), pipelineHandler.Events)
 
 			// ─── Products (shop catalog) ──────────────────────────────────────
 			prod := protected.Group("/products")

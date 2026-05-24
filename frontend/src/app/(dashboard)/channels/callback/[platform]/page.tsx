@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2, CheckCircle, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,10 +19,11 @@ type Step =
 function OAuthCallbackContent() {
   const router = useRouter();
   const params = useSearchParams();
+  const { platform } = useParams<{ platform: string }>();
   const [step, setStep] = useState<Step>("detecting");
   const [error, setError] = useState("");
-  const [pages, setPages] = useState<{ id: string; name: string }[]>([]);
-  const [fbCode, setFbCode] = useState("");
+  const [pages, setPages] = useState<{ id: string; name: string }[] | null>(null);
+  const [fbUserToken, setFbUserToken] = useState("");
   const processed = useRef(false);
 
   useEffect(() => {
@@ -30,7 +31,7 @@ function OAuthCallbackContent() {
     processed.current = true;
 
     const code = params.get("code");
-    const platform = sessionStorage.getItem("oauth_platform") as "tiktok" | "facebook" | null;
+    const state = params.get("state") ?? "";
 
     if (!code || !platform) {
       setError("Missing OAuth parameters. Please try again.");
@@ -38,12 +39,10 @@ function OAuthCallbackContent() {
       return;
     }
 
-    sessionStorage.removeItem("oauth_platform");
-
     if (platform === "tiktok") {
       setStep("tiktok_connecting");
       channelsApi
-        .connectTikTok(code)
+        .connectTikTok(code, state)
         .then(() => {
           setStep("done");
           toast.success("TikTok channel connected!");
@@ -55,24 +54,28 @@ function OAuthCallbackContent() {
           setStep("error");
         });
     } else if (platform === "facebook") {
-      // First fetch pages, then let user pick one
       setStep("facebook_pages");
-      setFbCode(code);
       channelsApi
         .getFacebookPages(code)
-        .then((p) => setPages(p))
+        .then(({ pages: p, userToken }) => {
+          setPages(p);
+          setFbUserToken(userToken);
+        })
         .catch((err) => {
           const msg = err?.response?.data?.message ?? "Failed to fetch Facebook pages";
           setError(msg);
           setStep("error");
         });
+    } else {
+      setError(`Unknown platform: ${platform}`);
+      setStep("error");
     }
-  }, [params, router]);
+  }, [params, platform, router]);
 
   const connectFBPage = async (pageId: string) => {
     setStep("facebook_connecting");
     try {
-      await channelsApi.connectFacebook(fbCode, pageId);
+      await channelsApi.connectFacebook(fbUserToken, pageId);
       setStep("done");
       toast.success("Facebook Page connected!");
       setTimeout(() => router.push("/channels"), 1500);
@@ -90,12 +93,12 @@ function OAuthCallbackContent() {
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="text-center">
-            {step === "detecting"          && "Processing…"}
-            {step === "tiktok_connecting"  && "Connecting TikTok…"}
-            {step === "facebook_pages"     && "Select a Facebook Page"}
-            {step === "facebook_connecting"&& "Connecting Page…"}
-            {step === "done"               && "Connected!"}
-            {step === "error"              && "Connection Failed"}
+            {step === "detecting"           && "Processing…"}
+            {step === "tiktok_connecting"   && "Connecting TikTok…"}
+            {step === "facebook_pages"      && "Select a Facebook Page"}
+            {step === "facebook_connecting" && "Connecting Page…"}
+            {step === "done"                && "Connected!"}
+            {step === "error"               && "Connection Failed"}
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col items-center gap-4">
@@ -117,10 +120,14 @@ function OAuthCallbackContent() {
 
           {step === "facebook_pages" && (
             <div className="w-full flex flex-col gap-2">
-              {pages.length === 0 ? (
+              {pages === null ? (
                 <p className="text-sm text-center text-muted-foreground">
                   Loading your Facebook Pages…
                   <Loader2 className="mt-2 h-5 w-5 animate-spin mx-auto" />
+                </p>
+              ) : pages.length === 0 ? (
+                <p className="text-sm text-center text-muted-foreground">
+                  No Facebook Pages found. Create a Page on Facebook first, then try again.
                 </p>
               ) : (
                 <>

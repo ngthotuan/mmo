@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"mmo/pkg/config"
+	"mmo/pkg/httpclient"
 )
 
 type Client struct {
@@ -44,7 +45,7 @@ func New(cfg config.FacebookConfig) *Client {
 		tokenURL:     cfg.API.TokenURL,
 		graphBaseURL: cfg.API.GraphBaseURL,
 		httpTimeout:  cfg.HTTPTimeout,
-		httpClient:   &http.Client{Timeout: cfg.HTTPTimeout},
+		httpClient:   httpclient.New("facebook", cfg.HTTPTimeout),
 	}
 }
 

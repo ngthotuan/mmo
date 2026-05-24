@@ -50,6 +50,7 @@ func (h *TTSHandler) ProcessTask(ctx context.Context, task *asynq.Task) error {
 		JobID  string `json:"job_id"`
 		PlanID string `json:"plan_id"`
 		Script string `json:"script"`
+		Voice  string `json:"voice"`
 	}
 	if err := json.Unmarshal(task.Payload(), &p); err != nil {
 		return err
@@ -72,7 +73,11 @@ func (h *TTSHandler) ProcessTask(ctx context.Context, task *asynq.Task) error {
 
 	logger.Info("generating TTS", zap.String("job_id", p.JobID))
 
-	result, err := h.tts.Generate(ctx, p.Script, h.tts.DefaultVoice(), tmpDir)
+	voice := p.Voice
+	if voice == "" {
+		voice = h.tts.DefaultVoice()
+	}
+	result, err := h.tts.Generate(ctx, p.Script, voice, tmpDir)
 	if err != nil {
 		_ = h.videoRepo.UpdateStatus(ctx, jobID, video.JobStatusFailed, "TTS generation failed: "+err.Error())
 		return err
@@ -100,7 +105,7 @@ func (h *TTSHandler) ProcessTask(ctx context.Context, task *asynq.Task) error {
 		"audio_path":   result.AudioPath,
 		"subtitle_path": srtPath,
 	})
-	assembleTask := asynq.NewTask(queue.TaskAssembleVideo, payload, asynq.Queue(queue.QueueDefault))
+	assembleTask := asynq.NewTask(queue.TaskAssembleVideo, payload, asynq.Queue(queue.QueueVideo))
 	if _, err := h.queueClient.EnqueueContext(ctx, assembleTask); err != nil {
 		return fmt.Errorf("enqueue assemble: %w", err)
 	}
@@ -206,7 +211,7 @@ func (h *VideoAssemblyHandler) ProcessTask(ctx context.Context, task *asynq.Task
 		"job_id":     p.JobID,
 		"video_path": result.VideoPath,
 	})
-	uploadTask := asynq.NewTask(queue.TaskUploadToR2, payload, asynq.Queue(queue.QueueDefault))
+	uploadTask := asynq.NewTask(queue.TaskUploadToR2, payload, asynq.Queue(queue.QueueVideo))
 	if _, err := h.queueClient.EnqueueContext(ctx, uploadTask); err != nil {
 		return fmt.Errorf("enqueue upload: %w", err)
 	}

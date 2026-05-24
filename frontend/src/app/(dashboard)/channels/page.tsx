@@ -20,7 +20,7 @@ export default function ChannelsPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <Header title="Channels" />
+      <Header title="Channels" description="Manage your connected social media accounts" />
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">

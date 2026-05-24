@@ -23,4 +23,5 @@ const (
 	QueueCritical = "critical"
 	QueueDefault  = "default"
 	QueueLow      = "low"
+	QueueVideo    = "video"
 )

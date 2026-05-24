@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"mmo/internal/adapter/repository"
 	"mmo/internal/domain/channel"
 	"mmo/internal/integration/facebook"
@@ -20,6 +21,7 @@ type ChannelUsecase struct {
 	facebook            *facebook.Client
 	cryptoKey           []byte
 	facebookTokenExpiry time.Duration
+	redis               *redis.Client
 }
 
 func NewChannelUsecase(
@@ -28,6 +30,7 @@ func NewChannelUsecase(
 	facebookClient *facebook.Client,
 	encryptionKey string,
 	facebookTokenExpiry time.Duration,
+	redisClient *redis.Client,
 ) *ChannelUsecase {
 	return &ChannelUsecase{
 		repo:                repo,
@@ -35,14 +38,27 @@ func NewChannelUsecase(
 		facebook:            facebookClient,
 		cryptoKey:           []byte(encryptionKey),
 		facebookTokenExpiry: facebookTokenExpiry,
+		redis:               redisClient,
 	}
 }
 
+const pkceKeyPrefix = "pkce:"
+const pkceTTL = 10 * time.Minute
+
 // GetAuthURL returns the OAuth authorization URL for the given platform.
+// For TikTok it generates a PKCE verifier, stores it in Redis keyed by state, and
+// embeds the code_challenge in the redirect URL.
 func (uc *ChannelUsecase) GetAuthURL(platform channel.Platform, state string) (string, error) {
 	switch platform {
 	case channel.PlatformTikTok:
-		return uc.tiktok.AuthURL(state), nil
+		verifier, challenge, err := tiktok.GeneratePKCE()
+		if err != nil {
+			return "", fmt.Errorf("generate pkce: %w", err)
+		}
+		if err := uc.redis.Set(context.Background(), pkceKeyPrefix+state, verifier, pkceTTL).Err(); err != nil {
+			return "", fmt.Errorf("store pkce verifier: %w", err)
+		}
+		return uc.tiktok.AuthURL(state, challenge), nil
 	case channel.PlatformFacebook:
 		return uc.facebook.AuthURL(state), nil
 	default:
@@ -51,8 +67,13 @@ func (uc *ChannelUsecase) GetAuthURL(platform channel.Platform, state string) (s
 }
 
 // ConnectTikTok exchanges the OAuth code for tokens and upserts the channel.
-func (uc *ChannelUsecase) ConnectTikTok(ctx context.Context, userID uuid.UUID, code string) (*channel.Channel, error) {
-	tokens, err := uc.tiktok.ExchangeCode(ctx, code)
+// state is required to look up the PKCE verifier stored during GetAuthURL.
+func (uc *ChannelUsecase) ConnectTikTok(ctx context.Context, userID uuid.UUID, code, state string) (*channel.Channel, error) {
+	verifier, err := uc.redis.GetDel(ctx, pkceKeyPrefix+state).Result()
+	if err != nil {
+		return nil, apperr.New(400, "invalid or expired oauth state — please retry the TikTok login")
+	}
+	tokens, err := uc.tiktok.ExchangeCode(ctx, code, verifier)
 	if err != nil {
 		return nil, fmt.Errorf("tiktok exchange code: %w", err)
 	}
@@ -108,21 +129,10 @@ func (uc *ChannelUsecase) ConnectTikTok(ctx context.Context, userID uuid.UUID, c
 	return ch, nil
 }
 
-// ConnectFacebook connects a Facebook Page.
-func (uc *ChannelUsecase) ConnectFacebook(ctx context.Context, userID uuid.UUID, code, pageID string) (*channel.Channel, error) {
-	tokens, err := uc.facebook.ExchangeCode(ctx, code)
-	if err != nil {
-		return nil, fmt.Errorf("facebook exchange code: %w", err)
-	}
-
-	// Get long-lived token
-	longLived, err := uc.facebook.GetLongLivedToken(ctx, tokens.AccessToken)
-	if err != nil {
-		return nil, fmt.Errorf("facebook long-lived token: %w", err)
-	}
-
-	// Get page-specific token
-	page, err := uc.facebook.GetPageToken(ctx, longLived, pageID)
+// ConnectFacebook connects a Facebook Page using the long-lived user token obtained from GetFacebookPages.
+func (uc *ChannelUsecase) ConnectFacebook(ctx context.Context, userID uuid.UUID, userToken, pageID string) (*channel.Channel, error) {
+	// Get page-specific token using the already-exchanged long-lived user token
+	page, err := uc.facebook.GetPageToken(ctx, userToken, pageID)
 	if err != nil {
 		return nil, fmt.Errorf("facebook page token: %w", err)
 	}
@@ -166,17 +176,22 @@ func (uc *ChannelUsecase) ConnectFacebook(ctx context.Context, userID uuid.UUID,
 	return ch, nil
 }
 
-// GetFacebookPages returns available pages for a user's code — used in the connect wizard.
-func (uc *ChannelUsecase) GetFacebookPages(ctx context.Context, code string) ([]facebook.Page, error) {
+// GetFacebookPages exchanges the OAuth code once, fetches available pages, and returns both.
+// The caller must pass userToken back to ConnectFacebook — the code must not be exchanged again.
+func (uc *ChannelUsecase) GetFacebookPages(ctx context.Context, code string) ([]facebook.Page, string, error) {
 	tokens, err := uc.facebook.ExchangeCode(ctx, code)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	longLived, err := uc.facebook.GetLongLivedToken(ctx, tokens.AccessToken)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return uc.facebook.ListPages(ctx, longLived)
+	pages, err := uc.facebook.ListPages(ctx, longLived)
+	if err != nil {
+		return nil, "", err
+	}
+	return pages, longLived, nil
 }
 
 func (uc *ChannelUsecase) List(ctx context.Context, userID uuid.UUID) ([]*channel.Channel, error) {

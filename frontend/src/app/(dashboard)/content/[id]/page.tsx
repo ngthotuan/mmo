@@ -31,16 +31,18 @@ export default function ContentDetailPage({ params }: Props) {
 
   const [script, setScript] = useState("");
   const [title, setTitle] = useState("");
-  const dirty = !!plan && (script !== plan.script || title !== plan.title);
+  const [voice, setVoice] = useState("");
+  const dirty = !!plan && (script !== plan.script || title !== plan.title || voice !== (plan.voice ?? ""));
 
   // Sync local state when plan loads
   if (plan && script === "" && title === "") {
     setScript(plan.script);
     setTitle(plan.title);
+    setVoice(plan.voice ?? "");
   }
 
   const saveMut = useMutation({
-    mutationFn: () => contentApi.updatePlan(id, { title, script }),
+    mutationFn: () => contentApi.updatePlan(id, { title, script, voice: voice || undefined }),
     onSuccess: () => {
       toast.success("Saved");
       qc.invalidateQueries({ queryKey: ["content-plan", id] });
@@ -192,22 +194,60 @@ export default function ContentDetailPage({ params }: Props) {
           </Card>
 
           {isDraft && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Actions</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2">
-                <Button className="w-full gap-2" onClick={() => approveMut.mutate()} disabled={busy}>
-                  {approveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
-                  Approve & Create Video
-                </Button>
-                <Button variant="outline" className="w-full gap-2 text-destructive hover:text-destructive"
-                  onClick={() => rejectMut.mutate()} disabled={busy}>
-                  {rejectMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
-                  Reject
-                </Button>
-              </CardContent>
-            </Card>
+            <>
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Voice</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <select
+                    value={voice}
+                    onChange={(e) => setVoice(e.target.value)}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">Default (en-US-AriaNeural)</option>
+                    <optgroup label="English (US)">
+                      <option value="en-US-AriaNeural">Aria (Female)</option>
+                      <option value="en-US-JennyNeural">Jenny (Female)</option>
+                      <option value="en-US-GuyNeural">Guy (Male)</option>
+                      <option value="en-US-DavisNeural">Davis (Male)</option>
+                      <option value="en-US-AmberNeural">Amber (Female)</option>
+                      <option value="en-US-ChristopherNeural">Christopher (Male)</option>
+                    </optgroup>
+                    <optgroup label="English (UK)">
+                      <option value="en-GB-SoniaNeural">Sonia (Female)</option>
+                      <option value="en-GB-RyanNeural">Ryan (Male)</option>
+                    </optgroup>
+                    <optgroup label="English (AU)">
+                      <option value="en-AU-NatashaNeural">Natasha (Female)</option>
+                      <option value="en-AU-WilliamNeural">William (Male)</option>
+                    </optgroup>
+                    <optgroup label="Vietnamese">
+                      <option value="vi-VN-HoaiMyNeural">Hoài My (Female)</option>
+                      <option value="vi-VN-NamMinhNeural">Nam Minh (Male)</option>
+                    </optgroup>
+                  </select>
+                  <p className="mt-1 text-xs text-muted-foreground">Used for TTS narration</p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Actions</CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  <Button className="w-full gap-2" onClick={() => approveMut.mutate()} disabled={busy}>
+                    {approveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+                    Approve & Create Video
+                  </Button>
+                  <Button variant="outline" className="w-full gap-2 text-destructive hover:text-destructive"
+                    onClick={() => rejectMut.mutate()} disabled={busy}>
+                    {rejectMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                    Reject
+                  </Button>
+                </CardContent>
+              </Card>
+            </>
           )}
         </div>
       </div>

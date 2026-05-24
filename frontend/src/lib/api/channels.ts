@@ -14,24 +14,25 @@ export const channelsApi = {
     return data.auth_url;
   },
 
-  connectTikTok: async (code: string): Promise<Channel> => {
-    const { data } = await apiClient.post<Channel>("/api/v1/channels/oauth/tiktok", { code });
+  connectTikTok: async (code: string, state: string): Promise<Channel> => {
+    const { data } = await apiClient.post<Channel>("/api/v1/channels/oauth/tiktok", { code, state });
     return data;
   },
 
-  connectFacebook: async (code: string, pageId: string): Promise<Channel> => {
+  connectFacebook: async (userToken: string, pageId: string): Promise<Channel> => {
     const { data } = await apiClient.post<Channel>("/api/v1/channels/oauth/facebook", {
-      code,
+      user_token: userToken,
       page_id: pageId,
     });
     return data;
   },
 
-  getFacebookPages: async (code: string) => {
+  getFacebookPages: async (code: string): Promise<{ pages: { id: string; name: string }[]; userToken: string }> => {
     const { data } = await apiClient.get<{
-      data: { id: string; name: string; access_token: string }[];
+      data: { id: string; name: string }[];
+      user_token: string;
     }>(`/api/v1/channels/facebook/pages?code=${encodeURIComponent(code)}`);
-    return data.data;
+    return { pages: data.data, userToken: data.user_token };
   },
 
   delete: async (id: string): Promise<void> => {

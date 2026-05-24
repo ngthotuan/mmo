@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"time"
 	"fmt"
 	"strings"
 
@@ -136,8 +137,10 @@ func (h *PublishHandler) ProcessTask(ctx context.Context, task *asynq.Task) erro
 		return fmt.Errorf("publish failed: %w", err)
 	}
 
+	now := time.Now()
 	job.PlatformPostID = postID
 	job.Status = publish.JobStatusPublished
+	job.PublishedAt = &now
 	if err := h.publishRepo.Update(ctx, job); err != nil {
 		return err
 	}

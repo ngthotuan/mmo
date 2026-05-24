@@ -52,6 +52,7 @@ type ContentPlan struct {
 	ScriptMetadata  []byte     `db:"script_metadata"` // JSONB
 	Status          Status     `db:"status"`
 	AutoApprove     bool       `db:"auto_approve"`
+	Voice           string     `db:"voice"`
 	Notes           string     `db:"notes"`
 	CreatedAt       time.Time  `db:"created_at"`
 	UpdatedAt       time.Time  `db:"updated_at"`

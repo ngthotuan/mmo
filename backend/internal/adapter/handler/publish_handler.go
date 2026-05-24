@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"mmo/internal/domain/publish"
 	"mmo/internal/usecase"
 	apperr "mmo/pkg/errors"
 	"mmo/pkg/util"
@@ -19,6 +20,44 @@ func NewPublishHandler(uc *usecase.PublishUsecase) *PublishHandler {
 	return &PublishHandler{uc: uc}
 }
 
+type publishJobDTO struct {
+	ID              uuid.UUID  `json:"id"`
+	VideoJobID      uuid.UUID  `json:"video_job_id"`
+	ChannelID       uuid.UUID  `json:"channel_id"`
+	Platform        string     `json:"platform"`
+	Caption         string     `json:"caption"`
+	Hashtags        []string   `json:"hashtags"`
+	ScheduledAt     *time.Time `json:"scheduled_at"`
+	PublishedAt     *time.Time `json:"published_at"`
+	PlatformPostID  string     `json:"platform_post_id"`
+	PlatformPostURL string     `json:"platform_post_url"`
+	Status          string     `json:"status"`
+	ErrorMessage    string     `json:"error_message"`
+	CreatedAt       string     `json:"created_at"`
+}
+
+func toPublishJobDTO(j *publish.Job) publishJobDTO {
+	hashtags := j.Hashtags
+	if hashtags == nil {
+		hashtags = []string{}
+	}
+	return publishJobDTO{
+		ID:              j.ID,
+		VideoJobID:      j.VideoJobID,
+		ChannelID:       j.ChannelID,
+		Platform:        j.Platform,
+		Caption:         j.Caption,
+		Hashtags:        hashtags,
+		ScheduledAt:     j.ScheduledAt,
+		PublishedAt:     j.PublishedAt,
+		PlatformPostID:  j.PlatformPostID,
+		PlatformPostURL: j.PlatformPostURL,
+		Status:          string(j.Status),
+		ErrorMessage:    j.ErrorMessage,
+		CreatedAt:       j.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+}
+
 func (h *PublishHandler) List(c *gin.Context) {
 	userID := mustParseUserID(c)
 	status := c.Query("status")
@@ -29,7 +68,11 @@ func (h *PublishHandler) List(c *gin.Context) {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": jobs, "total": total})
+	dtos := make([]publishJobDTO, len(jobs))
+	for i, j := range jobs {
+		dtos[i] = toPublishJobDTO(j)
+	}
+	c.JSON(http.StatusOK, gin.H{"data": dtos, "total": total})
 }
 
 func (h *PublishHandler) Create(c *gin.Context) {
@@ -68,7 +111,7 @@ func (h *PublishHandler) Create(c *gin.Context) {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"data": job})
+	c.JSON(http.StatusCreated, gin.H{"data": toPublishJobDTO(job)})
 }
 
 func (h *PublishHandler) Get(c *gin.Context) {
@@ -82,7 +125,7 @@ func (h *PublishHandler) Get(c *gin.Context) {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": job})
+	c.JSON(http.StatusOK, gin.H{"data": toPublishJobDTO(job)})
 }
 
 func (h *PublishHandler) Update(c *gin.Context) {
@@ -105,7 +148,7 @@ func (h *PublishHandler) Update(c *gin.Context) {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": job})
+	c.JSON(http.StatusOK, gin.H{"data": toPublishJobDTO(job)})
 }
 
 func (h *PublishHandler) Cancel(c *gin.Context) {
@@ -139,14 +182,14 @@ func (h *PublishHandler) Calendar(c *gin.Context) {
 	startStr := c.Query("start")
 	endStr := c.Query("end")
 
-	start, err := time.Parse(time.RFC3339, startStr)
+	start, err := parseDate(startStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid start date, use RFC3339"})
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid start date, use RFC3339 or YYYY-MM-DD"})
 		return
 	}
-	end, err := time.Parse(time.RFC3339, endStr)
+	end, err := parseDate(endStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid end date, use RFC3339"})
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid end date, use RFC3339 or YYYY-MM-DD"})
 		return
 	}
 
@@ -155,5 +198,16 @@ func (h *PublishHandler) Calendar(c *gin.Context) {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": jobs})
+	dtos := make([]publishJobDTO, len(jobs))
+	for i, j := range jobs {
+		dtos[i] = toPublishJobDTO(j)
+	}
+	c.JSON(http.StatusOK, gin.H{"data": dtos})
+}
+
+func parseDate(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	return time.Parse("2006-01-02", s)
 }

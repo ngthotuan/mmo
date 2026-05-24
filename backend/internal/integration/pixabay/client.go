@@ -8,6 +8,7 @@ import (
 	"net/url"
 
 	"mmo/pkg/config"
+	"mmo/pkg/httpclient"
 )
 
 type Client struct {
@@ -48,7 +49,7 @@ func New(cfg config.PixabayConfig) *Client {
 	return &Client{
 		apiKey:     cfg.APIKey,
 		apiBase:    cfg.APIBase,
-		httpClient: &http.Client{Timeout: cfg.HTTPTimeout},
+		httpClient: httpclient.New("pixabay", cfg.HTTPTimeout),
 	}
 }
 

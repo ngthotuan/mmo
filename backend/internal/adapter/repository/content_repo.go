@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -20,6 +21,39 @@ type TrendRepo struct{ db *sqlx.DB }
 
 func NewTrendRepo(db *sqlx.DB) *TrendRepo { return &TrendRepo{db: db} }
 
+// trendTopicRow is a scan target that handles TEXT[] → []string via pq.StringArray.
+type trendTopicRow struct {
+	ID            uuid.UUID      `db:"id"`
+	UserID        *uuid.UUID     `db:"user_id"`
+	Source        string         `db:"source"`
+	Title         string         `db:"title"`
+	Description   string         `db:"description"`
+	Keywords      pq.StringArray `db:"keywords"`
+	TrendingScore float64        `db:"trending_score"`
+	SourceURL     *string        `db:"source_url"`
+	RawData       []byte         `db:"raw_data"`
+	Status        string         `db:"status"`
+	DiscoveredAt  time.Time      `db:"discovered_at"`
+	CreatedAt     time.Time      `db:"created_at"`
+}
+
+func (row trendTopicRow) toEntity() *content.TrendTopic {
+	return &content.TrendTopic{
+		ID:            row.ID,
+		UserID:        row.UserID,
+		Source:        row.Source,
+		Title:         row.Title,
+		Description:   row.Description,
+		Keywords:      []string(row.Keywords),
+		TrendingScore: row.TrendingScore,
+		SourceURL:     func() string { if row.SourceURL != nil { return *row.SourceURL }; return "" }(),
+		RawData:       row.RawData,
+		Status:        row.Status,
+		DiscoveredAt:  row.DiscoveredAt,
+		CreatedAt:     row.CreatedAt,
+	}
+}
+
 func (r *TrendRepo) Create(ctx context.Context, t *content.TrendTopic) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO trend_topics
@@ -32,12 +66,14 @@ func (r *TrendRepo) Create(ctx context.Context, t *content.TrendTopic) error {
 }
 
 func (r *TrendRepo) GetByID(ctx context.Context, id uuid.UUID) (*content.TrendTopic, error) {
-	var t content.TrendTopic
-	err := r.db.GetContext(ctx, &t, `SELECT * FROM trend_topics WHERE id = $1`, id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, apperr.ErrNotFound
+	var row trendTopicRow
+	if err := r.db.GetContext(ctx, &row, `SELECT * FROM trend_topics WHERE id = $1`, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, apperr.ErrNotFound
+		}
+		return nil, err
 	}
-	return &t, err
+	return row.toEntity(), nil
 }
 
 func (r *TrendRepo) List(ctx context.Context, userID uuid.UUID, status string, p util.Pagination) ([]*content.TrendTopic, int, error) {
@@ -56,14 +92,19 @@ func (r *TrendRepo) List(ctx context.Context, userID uuid.UUID, status string, p
 	}
 
 	args = append(args, p.Limit(), p.Offset())
-	rows := []*content.TrendTopic{}
+	var rows []trendTopicRow
 	if err := r.db.SelectContext(ctx, &rows,
 		fmt.Sprintf("SELECT * FROM trend_topics WHERE %s ORDER BY discovered_at DESC LIMIT $%d OFFSET $%d",
 			where, len(args)-1, len(args)), args...,
 	); err != nil {
 		return nil, 0, err
 	}
-	return rows, total, nil
+
+	trends := make([]*content.TrendTopic, len(rows))
+	for i, row := range rows {
+		trends[i] = row.toEntity()
+	}
+	return trends, total, nil
 }
 
 func (r *TrendRepo) UpdateStatus(ctx context.Context, id uuid.UUID, status string) error {
@@ -87,26 +128,67 @@ type ContentPlanRepo struct{ db *sqlx.DB }
 
 func NewContentPlanRepo(db *sqlx.DB) *ContentPlanRepo { return &ContentPlanRepo{db: db} }
 
+// contentPlanRow is a scan target that handles VARCHAR(50)[] → []string via pq.StringArray.
+type contentPlanRow struct {
+	ID              uuid.UUID      `db:"id"`
+	UserID          uuid.UUID      `db:"user_id"`
+	TrendTopicID    *uuid.UUID     `db:"trend_topic_id"`
+	VideoTemplateID *uuid.UUID     `db:"video_template_id"`
+	Title           string         `db:"title"`
+	Niche           string         `db:"niche"`
+	TargetPlatforms pq.StringArray `db:"target_platforms"`
+	Script          string         `db:"script"`
+	ScriptMetadata  []byte         `db:"script_metadata"`
+	Status          content.Status `db:"status"`
+	AutoApprove     bool           `db:"auto_approve"`
+	Voice           string         `db:"voice"`
+	Notes           string         `db:"notes"`
+	CreatedAt       time.Time      `db:"created_at"`
+	UpdatedAt       time.Time      `db:"updated_at"`
+}
+
+func (row contentPlanRow) toEntity() *content.ContentPlan {
+	return &content.ContentPlan{
+		ID:              row.ID,
+		UserID:          row.UserID,
+		TrendTopicID:    row.TrendTopicID,
+		VideoTemplateID: row.VideoTemplateID,
+		Title:           row.Title,
+		Niche:           row.Niche,
+		TargetPlatforms: []string(row.TargetPlatforms),
+		Script:          row.Script,
+		ScriptMetadata:  row.ScriptMetadata,
+		Status:          row.Status,
+		AutoApprove:     row.AutoApprove,
+		Voice:           row.Voice,
+		Notes:           row.Notes,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}
+}
+
 func (r *ContentPlanRepo) Create(ctx context.Context, p *content.ContentPlan) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO content_plans
 			(id, user_id, trend_topic_id, video_template_id, title, niche,
-			 target_platforms, script, script_metadata, status, auto_approve, notes)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+			 target_platforms, script, script_metadata, status, auto_approve, voice, notes)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		p.ID, p.UserID, p.TrendTopicID, p.VideoTemplateID, p.Title, p.Niche,
 		pq.Array(p.TargetPlatforms), p.Script, p.ScriptMetadata,
-		p.Status, p.AutoApprove, p.Notes,
+		p.Status, p.AutoApprove, p.Voice, p.Notes,
 	)
 	return err
 }
 
 func (r *ContentPlanRepo) GetByID(ctx context.Context, id uuid.UUID) (*content.ContentPlan, error) {
-	var p content.ContentPlan
-	err := r.db.GetContext(ctx, &p, `SELECT * FROM content_plans WHERE id = $1`, id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, apperr.ErrNotFound
+	var row contentPlanRow
+	if err := r.db.GetContext(ctx, &row, `SELECT * FROM content_plans WHERE id = $1`, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, apperr.ErrNotFound
+		}
+		return nil, err
 	}
-	return &p, err
+	return row.toEntity(), nil
 }
 
 func (r *ContentPlanRepo) List(ctx context.Context, userID uuid.UUID, status content.Status, p util.Pagination) ([]*content.ContentPlan, int, error) {
@@ -125,12 +207,17 @@ func (r *ContentPlanRepo) List(ctx context.Context, userID uuid.UUID, status con
 	}
 
 	args = append(args, p.Limit(), p.Offset())
-	plans := []*content.ContentPlan{}
-	if err := r.db.SelectContext(ctx, &plans,
+	var rows []contentPlanRow
+	if err := r.db.SelectContext(ctx, &rows,
 		fmt.Sprintf("SELECT * FROM content_plans WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
 			where, len(args)-1, len(args)), args...,
 	); err != nil {
 		return nil, 0, err
+	}
+
+	plans := make([]*content.ContentPlan, len(rows))
+	for i, row := range rows {
+		plans[i] = row.toEntity()
 	}
 	return plans, total, nil
 }
@@ -139,10 +226,10 @@ func (r *ContentPlanRepo) Update(ctx context.Context, p *content.ContentPlan) er
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE content_plans SET
 			title=$1, niche=$2, target_platforms=$3, script=$4, script_metadata=$5,
-			status=$6, auto_approve=$7, notes=$8, video_template_id=$9
-		WHERE id=$10`,
+			status=$6, auto_approve=$7, voice=$8, notes=$9, video_template_id=$10
+		WHERE id=$11`,
 		p.Title, p.Niche, pq.Array(p.TargetPlatforms), p.Script, p.ScriptMetadata,
-		p.Status, p.AutoApprove, p.Notes, p.VideoTemplateID, p.ID,
+		p.Status, p.AutoApprove, p.Voice, p.Notes, p.VideoTemplateID, p.ID,
 	)
 	return err
 }

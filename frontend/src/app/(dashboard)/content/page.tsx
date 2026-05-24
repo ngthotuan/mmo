@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, TrendingUp, FileText, Loader2 } from "lucide-react";
+import { RefreshCw, TrendingUp, FileText, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ const CONTENT_STATUSES = ["", "draft", "approved", "video_ready", "published", "
 export default function ContentPage() {
   const qc = useQueryClient();
   const [planStatus, setPlanStatus] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const { data: trendsData, isLoading: trendsLoading } = useQuery({
     queryKey: ["trends", "new"],
@@ -38,9 +39,43 @@ export default function ContentPage() {
     onError: () => toast.error("Failed to queue discovery"),
   });
 
+  const [bulkPending, setBulkPending] = useState(false);
+
+  const bulkApprove = async () => {
+    setBulkPending(true);
+    const ids = [...selected];
+    const results = await Promise.allSettled(ids.map((id) => contentApi.approvePlan(id)));
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed === 0) toast.success(`${ids.length} plan(s) approved`);
+    else toast.error(`${failed} failed, ${ids.length - failed} approved`);
+    setSelected(new Set());
+    setBulkPending(false);
+    qc.invalidateQueries({ queryKey: ["content-plans"] });
+  };
+
+  const bulkReject = async () => {
+    setBulkPending(true);
+    const ids = [...selected];
+    const results = await Promise.allSettled(ids.map((id) => contentApi.rejectPlan(id)));
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed === 0) toast.success(`${ids.length} plan(s) rejected`);
+    else toast.error(`${failed} failed, ${ids.length - failed} rejected`);
+    setSelected(new Set());
+    setBulkPending(false);
+    qc.invalidateQueries({ queryKey: ["content-plans"] });
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
   return (
     <div className="flex flex-col gap-6 p-6">
-      <Header title="Content Pipeline" />
+      <Header title="Content Pipeline" description="Discover trends and manage your AI-generated scripts" />
 
       <Tabs defaultValue="trends">
         <div className="flex items-center justify-between flex-wrap gap-3">
@@ -119,12 +154,30 @@ export default function ContentPage() {
                 variant={planStatus === s ? "default" : "outline"}
                 size="sm"
                 className="h-7 text-xs"
-                onClick={() => setPlanStatus(s)}
+                onClick={() => { setPlanStatus(s); setSelected(new Set()); }}
               >
                 {s || "All"}
               </Button>
             ))}
           </div>
+
+          {/* Bulk action bar */}
+          {selected.size > 0 && (
+            <div className="mb-3 flex items-center gap-3 rounded-lg border bg-muted/50 px-4 py-2">
+              <span className="text-sm font-medium">{selected.size} selected</span>
+              <Button size="sm" className="h-7 gap-1 text-xs" onClick={bulkApprove} disabled={bulkPending}>
+                {bulkPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                Approve All
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 gap-1 text-xs text-destructive hover:text-destructive" onClick={bulkReject} disabled={bulkPending}>
+                {bulkPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
+                Reject All
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto" onClick={() => setSelected(new Set())}>
+                Clear
+              </Button>
+            </div>
+          )}
 
           {plansLoading ? (
             <div className="flex flex-col gap-3">
@@ -135,7 +188,19 @@ export default function ContentPage() {
           ) : plansData?.data.length ? (
             <div className="flex flex-col gap-3">
               {plansData.data.map((p) => (
-                <ContentPlanCard key={p.id} plan={p} />
+                <div key={p.id} className="flex items-start gap-2">
+                  {p.status === "draft" && (
+                    <input
+                      type="checkbox"
+                      checked={selected.has(p.id)}
+                      onChange={() => toggleSelect(p.id)}
+                      className="mt-3.5 h-4 w-4 shrink-0 cursor-pointer rounded border-gray-300"
+                    />
+                  )}
+                  <div className={p.status === "draft" ? "flex-1" : "flex-1"}>
+                    <ContentPlanCard plan={p} />
+                  </div>
+                </div>
               ))}
             </div>
           ) : (

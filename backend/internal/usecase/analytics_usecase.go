@@ -24,3 +24,8 @@ func (u *AnalyticsUsecase) Overview(ctx context.Context, userID uuid.UUID, days 
 func (u *AnalyticsUsecase) ListPosts(ctx context.Context, userID uuid.UUID, page, perPage int) ([]repository.PostAnalyticsSummary, int, error) {
 	return u.repo.ListPosts(ctx, userID, page, perPage)
 }
+
+func (u *AnalyticsUsecase) Timeseries(ctx context.Context, userID uuid.UUID, days int) ([]repository.TimeseriesPoint, error) {
+	since := time.Now().AddDate(0, 0, -days)
+	return u.repo.Timeseries(ctx, userID, since)
+}

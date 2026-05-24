@@ -67,7 +67,7 @@ func (u *ProductUsecase) Create(ctx context.Context, userID uuid.UUID, req Creat
 	if err := u.productRepo.Create(ctx, p); err != nil {
 		return nil, err
 	}
-	return p, nil
+	return u.productRepo.GetByID(ctx, p.ID)
 }
 
 func (u *ProductUsecase) List(ctx context.Context, userID uuid.UUID, platform string, page, perPage int) ([]*product.Product, int, error) {

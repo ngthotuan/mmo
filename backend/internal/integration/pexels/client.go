@@ -8,6 +8,7 @@ import (
 	"net/url"
 
 	"mmo/pkg/config"
+	"mmo/pkg/httpclient"
 )
 
 type Client struct {
@@ -50,7 +51,7 @@ func New(cfg config.PexelsConfig) *Client {
 	return &Client{
 		apiKey:     cfg.APIKey,
 		apiBase:    cfg.APIBase,
-		httpClient: &http.Client{Timeout: cfg.HTTPTimeout},
+		httpClient: httpclient.New("pexels", cfg.HTTPTimeout),
 	}
 }
 

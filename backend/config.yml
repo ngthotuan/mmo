@@ -52,7 +52,7 @@ ffmpeg:
 
 gemini:
   api_key: "${GEMINI_API_KEY}"
-  model: "gemini-1.5-flash"
+  model: "gemini-2.0-flash"
   api_base: "https://generativelanguage.googleapis.com/v1beta/models"
   http_timeout: "30s"
 
@@ -127,7 +127,9 @@ publish:
 
 video:
   presigned_url_ttl: "1h"
+  target_duration_secs: 360
+  max_clips: 15
 
 media_collect:
   http_timeout: "60s"
-  assets_per_search: 3
+  assets_per_search: 15

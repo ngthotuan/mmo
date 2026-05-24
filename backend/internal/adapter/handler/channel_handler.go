@@ -6,9 +6,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 	"mmo/internal/domain/channel"
 	"mmo/internal/usecase"
 	apperr "mmo/pkg/errors"
+	"mmo/pkg/logger"
 	"mmo/pkg/middleware"
 )
 
@@ -78,14 +80,15 @@ func (h *ChannelHandler) GetAuthURL(c *gin.Context) {
 func (h *ChannelHandler) ConnectTikTok(c *gin.Context) {
 	userID := mustParseUserID(c)
 	var body struct {
-		Code string `json:"code" binding:"required"`
+		Code  string `json:"code"  binding:"required"`
+		State string `json:"state" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, apperr.ErrBadRequest)
 		return
 	}
 
-	ch, err := h.uc.ConnectTikTok(c.Request.Context(), userID, body.Code)
+	ch, err := h.uc.ConnectTikTok(c.Request.Context(), userID, body.Code, body.State)
 	if err != nil {
 		respondErr(c, err)
 		return
@@ -97,15 +100,15 @@ func (h *ChannelHandler) ConnectTikTok(c *gin.Context) {
 func (h *ChannelHandler) ConnectFacebook(c *gin.Context) {
 	userID := mustParseUserID(c)
 	var body struct {
-		Code   string `json:"code"    binding:"required"`
-		PageID string `json:"page_id" binding:"required"`
+		UserToken string `json:"user_token" binding:"required"`
+		PageID    string `json:"page_id"    binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, apperr.ErrBadRequest)
 		return
 	}
 
-	ch, err := h.uc.ConnectFacebook(c.Request.Context(), userID, body.Code, body.PageID)
+	ch, err := h.uc.ConnectFacebook(c.Request.Context(), userID, body.UserToken, body.PageID)
 	if err != nil {
 		respondErr(c, err)
 		return
@@ -114,19 +117,21 @@ func (h *ChannelHandler) ConnectFacebook(c *gin.Context) {
 }
 
 // GET /channels/facebook/pages?code=...
-// Returns list of FB pages the user manages (before they pick one to connect).
+// Returns list of FB pages the user manages and the long-lived user token.
+// The client must pass user_token back to POST /channels/oauth/facebook.
 func (h *ChannelHandler) ListFacebookPages(c *gin.Context) {
 	code := c.Query("code")
 	if code == "" {
 		c.JSON(http.StatusBadRequest, apperr.ErrBadRequest)
 		return
 	}
-	pages, err := h.uc.GetFacebookPages(c.Request.Context(), code)
+	pages, userToken, err := h.uc.GetFacebookPages(c.Request.Context(), code)
 	if err != nil {
+		logger.Get().Error("list facebook pages failed", zap.Error(err))
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": pages})
+	c.JSON(http.StatusOK, gin.H{"data": pages, "user_token": userToken})
 }
 
 // DELETE /channels/:id
@@ -178,6 +183,11 @@ func respondErr(c *gin.Context, err error) {
 		c.JSON(appErr.Code, appErr)
 		return
 	}
+	logger.Error("internal server error",
+		zap.String("method", c.Request.Method),
+		zap.String("path", c.Request.URL.Path),
+		zap.Error(err),
+	)
 	c.JSON(http.StatusInternalServerError, apperr.ErrInternalServer)
 }
 

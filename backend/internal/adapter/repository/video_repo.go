@@ -13,6 +13,18 @@ import (
 	"mmo/pkg/util"
 )
 
+const videoJobSelect = `
+	id, content_plan_id, template_id, status, media_assets,
+	COALESCE(tts_audio_key,'') AS tts_audio_key,
+	COALESCE(subtitle_key,'') AS subtitle_key,
+	COALESCE(output_video_key,'') AS output_video_key,
+	COALESCE(output_video_url,'') AS output_video_url,
+	duration_seconds, file_size_bytes,
+	COALESCE(ffmpeg_log,'') AS ffmpeg_log,
+	retry_count,
+	COALESCE(error_message,'') AS error_message,
+	started_at, completed_at, created_at, updated_at`
+
 type VideoJobRepo struct{ db *sqlx.DB }
 
 func NewVideoJobRepo(db *sqlx.DB) *VideoJobRepo { return &VideoJobRepo{db: db} }
@@ -33,7 +45,7 @@ func (r *VideoJobRepo) Create(ctx context.Context, j *video.Job) error {
 
 func (r *VideoJobRepo) GetByID(ctx context.Context, id uuid.UUID) (*video.Job, error) {
 	var j video.Job
-	if err := r.db.GetContext(ctx, &j, `SELECT * FROM video_jobs WHERE id = $1`, id); err != nil {
+	if err := r.db.GetContext(ctx, &j, `SELECT `+videoJobSelect+` FROM video_jobs WHERE id = $1`, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, apperr.ErrNotFound
 		}
@@ -61,9 +73,9 @@ func (r *VideoJobRepo) List(ctx context.Context, userID *uuid.UUID, status video
 	}
 
 	args = append(args, p.Limit(), p.Offset())
-	var jobs []*video.Job
+	jobs := make([]*video.Job, 0)
 	if err := r.db.SelectContext(ctx, &jobs,
-		fmt.Sprintf("SELECT * FROM video_jobs WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
+		fmt.Sprintf("SELECT "+videoJobSelect+" FROM video_jobs WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
 			where, len(args)-1, len(args)), args...,
 	); err != nil {
 		return nil, 0, err
@@ -108,7 +120,7 @@ func (r *VideoJobRepo) Delete(ctx context.Context, id uuid.UUID) error {
 
 func (r *VideoJobRepo) GetByContentPlanID(ctx context.Context, planID uuid.UUID) (*video.Job, error) {
 	var j video.Job
-	err := r.db.GetContext(ctx, &j, `SELECT * FROM video_jobs WHERE content_plan_id = $1 ORDER BY created_at DESC LIMIT 1`, planID)
+	err := r.db.GetContext(ctx, &j, `SELECT `+videoJobSelect+` FROM video_jobs WHERE content_plan_id = $1 ORDER BY created_at DESC LIMIT 1`, planID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apperr.ErrNotFound
 	}
@@ -149,7 +161,7 @@ func (r *VideoTemplateRepo) GetDefault(ctx context.Context) (*video.Template, er
 }
 
 func (r *VideoTemplateRepo) List(ctx context.Context, userID uuid.UUID) ([]*video.Template, error) {
-	var templates []*video.Template
+	templates := make([]*video.Template, 0)
 	err := r.db.SelectContext(ctx, &templates,
 		`SELECT * FROM video_templates WHERE user_id=$1 OR user_id IS NULL ORDER BY created_at DESC`, userID)
 	return templates, err

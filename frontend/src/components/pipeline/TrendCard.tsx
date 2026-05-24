@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { contentApi } from "@/lib/api/content";
 import type { TrendTopic } from "@/lib/types/api.types";
+import { AUTO_APPROVE_KEY } from "@/app/(dashboard)/settings/page";
 
 const sourceColor: Record<string, string> = {
   google_trends: "bg-blue-100 text-blue-700",
@@ -30,6 +31,7 @@ export function TrendCard({ trend, onGenerated }: Props) {
       contentApi.createFromTrend({
         topic_id: trend.id,
         platforms: ["tiktok"],
+        auto_approve: localStorage.getItem(AUTO_APPROVE_KEY) === "true",
       }),
     onSuccess: () => {
       toast.success("Script generated! Check Content tab.");
@@ -45,8 +47,8 @@ export function TrendCard({ trend, onGenerated }: Props) {
       <CardContent className="p-4 flex flex-col gap-2">
         <div className="flex items-start justify-between gap-2">
           <h3 className="font-medium text-sm leading-snug flex-1">{trend.title}</h3>
-          <Badge className={`text-xs shrink-0 ${sourceColor[trend.source] ?? "bg-muted text-muted-foreground"}`}>
-            {trend.source.replace("_", " ")}
+          <Badge className={`text-xs shrink-0 ${sourceColor[trend.source ?? ""] ?? "bg-muted text-muted-foreground"}`}>
+            {trend.source?.replace(/_/g, " ") ?? "unknown"}
           </Badge>
         </div>
 

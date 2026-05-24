@@ -197,7 +197,9 @@ type PublishConfig struct {
 }
 
 type VideoConfig struct {
-	PresignedURLTTL time.Duration
+	PresignedURLTTL    time.Duration
+	TargetDurationSecs int
+	MaxClips           int
 }
 
 type MediaCollectConfig struct {
@@ -392,7 +394,9 @@ type rawPublish struct {
 }
 
 type rawVideo struct {
-	PresignedURLTTL string `yaml:"presigned_url_ttl"`
+	PresignedURLTTL    string `yaml:"presigned_url_ttl"`
+	TargetDurationSecs int    `yaml:"target_duration_secs"`
+	MaxClips           int    `yaml:"max_clips"`
 }
 
 type rawMediaCollect struct {
@@ -554,7 +558,9 @@ func Load() *Config {
 			MinScheduleBeforeNow: mustDuration(raw.Publish.MinScheduleBeforeNow, "publish.min_schedule_before_now"),
 		},
 		Video: VideoConfig{
-			PresignedURLTTL: mustDuration(raw.Video.PresignedURLTTL, "video.presigned_url_ttl"),
+			PresignedURLTTL:    mustDuration(raw.Video.PresignedURLTTL, "video.presigned_url_ttl"),
+			TargetDurationSecs: raw.Video.TargetDurationSecs,
+			MaxClips:           raw.Video.MaxClips,
 		},
 		MediaCollect: MediaCollectConfig{
 			HTTPTimeout:     mustDuration(raw.MediaCollect.HTTPTimeout, "media_collect.http_timeout"),

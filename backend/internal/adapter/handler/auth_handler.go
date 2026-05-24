@@ -8,9 +8,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	apperr "mmo/pkg/errors"
-	"mmo/pkg/middleware"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
+	apperr "mmo/pkg/errors"
+	"mmo/pkg/logger"
+	"mmo/pkg/middleware"
 )
 
 type AuthHandler struct {
@@ -18,6 +20,7 @@ type AuthHandler struct {
 	jwtSecret  string
 	accessTTL  time.Duration
 	refreshTTL time.Duration
+	log        *zap.Logger
 }
 
 func NewAuthHandler(db *sqlx.DB, jwtSecret string, accessTTL, refreshTTL time.Duration) *AuthHandler {
@@ -26,6 +29,7 @@ func NewAuthHandler(db *sqlx.DB, jwtSecret string, accessTTL, refreshTTL time.Du
 		jwtSecret:  jwtSecret,
 		accessTTL:  accessTTL,
 		refreshTTL: refreshTTL,
+		log:        logger.Get(),
 	}
 }
 
@@ -55,6 +59,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
+		h.log.Error("register: bcrypt failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, apperr.ErrInternalServer)
 		return
 	}
@@ -69,12 +74,14 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			c.JSON(http.StatusConflict, apperr.ErrConflict)
 			return
 		}
+		h.log.Error("register: db insert failed", zap.String("email", req.Email), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, apperr.ErrInternalServer)
 		return
 	}
 
 	tokens, err := h.generateTokens(userID.String(), req.Email, "owner")
 	if err != nil {
+		h.log.Error("register: generate tokens failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, apperr.ErrInternalServer)
 		return
 	}
@@ -108,6 +115,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	tokens, err := h.generateTokens(user.ID.String(), req.Email, user.Role)
 	if err != nil {
+		h.log.Error("login: generate tokens failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, apperr.ErrInternalServer)
 		return
 	}
@@ -155,6 +163,7 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 	if _, err := h.db.ExecContext(c.Request.Context(),
 		`UPDATE users SET name=$1, updated_at=NOW() WHERE id=$2`, body.Name, claims.UserID,
 	); err != nil {
+		h.log.Error("update profile: db failed", zap.String("user_id", claims.UserID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, apperr.ErrInternalServer)
 		return
 	}
@@ -180,6 +189,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	if err := h.db.QueryRowContext(c.Request.Context(),
 		`SELECT password_hash FROM users WHERE id=$1`, claims.UserID,
 	).Scan(&hash); err != nil {
+		h.log.Error("change password: fetch hash failed", zap.String("user_id", claims.UserID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, apperr.ErrInternalServer)
 		return
 	}
@@ -190,12 +200,14 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 
 	newHash, err := bcrypt.GenerateFromPassword([]byte(body.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
+		h.log.Error("change password: bcrypt failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, apperr.ErrInternalServer)
 		return
 	}
 	if _, err := h.db.ExecContext(c.Request.Context(),
 		`UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2`, string(newHash), claims.UserID,
 	); err != nil {
+		h.log.Error("change password: db update failed", zap.String("user_id", claims.UserID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, apperr.ErrInternalServer)
 		return
 	}

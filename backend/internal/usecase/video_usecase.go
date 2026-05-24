@@ -83,7 +83,7 @@ func (u *VideoUsecase) RetryJob(ctx context.Context, id uuid.UUID) error {
 	payload, _ := json.Marshal(map[string]string{
 		"content_plan_id": job.ContentPlanID.String(),
 	})
-	t := asynq.NewTask(queue.TaskCollectMedia, payload, asynq.Queue(queue.QueueDefault))
+	t := asynq.NewTask(queue.TaskCollectMedia, payload, asynq.Queue(queue.QueueVideo))
 	_, err = u.queue.EnqueueContext(ctx, t)
 	return err
 }

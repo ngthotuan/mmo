@@ -160,7 +160,7 @@ export default function VideosPage() {
   const { data, isLoading } = useQuery({
     queryKey: ["videos", statusFilter],
     queryFn: () => videosApi.list({ status: statusFilter || undefined }),
-    refetchInterval: 10_000,
+    refetchInterval: 60_000, // SSE provides live updates; this is just a fallback
   });
 
   const retryMut = useMutation({
@@ -214,7 +214,7 @@ export default function VideosPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <Header title="Videos" />
+      <Header title="Videos" description="Monitor and manage your video production queue" />
 
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex gap-2 flex-wrap">

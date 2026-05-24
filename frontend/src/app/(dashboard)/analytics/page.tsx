@@ -2,10 +2,15 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3, Eye, Heart, MessageCircle, Share2, Loader2 } from "lucide-react";
+import { BarChart3, Eye, Heart, MessageCircle, Share2 } from "lucide-react";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  Legend, ResponsiveContainer,
+} from "recharts";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -45,11 +50,16 @@ export default function AnalyticsPage() {
     queryFn: () => analyticsApi.listPosts({ page: 1, per_page: 20 }),
   });
 
+  const { data: timeseriesData, isLoading: timeseriesLoading } = useQuery({
+    queryKey: ["analytics-timeseries", days],
+    queryFn: () => analyticsApi.timeseries(days),
+  });
+
   const stats = overview?.data;
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <Header title="Analytics" />
+      <Header title="Analytics" description="Track performance across all your published content" />
 
       {/* Time range filter */}
       <div className="flex gap-2">
@@ -82,6 +92,38 @@ export default function AnalyticsPage() {
         </div>
       )}
 
+      {/* Time-series chart */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Engagement Over Time</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {timeseriesLoading ? (
+            <Skeleton className="h-64 w-full" />
+          ) : (timeseriesData?.data?.length ?? 0) === 0 ? (
+            <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
+              No data yet for this period.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={timeseriesData?.data} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={(v) => v.slice(5)} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <Tooltip
+                  contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                  formatter={(value, name) => [(Number(value) || 0).toLocaleString(), String(name)]}
+                />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Line type="monotone" dataKey="views" stroke="#6366f1" strokeWidth={2} dot={false} name="Views" />
+                <Line type="monotone" dataKey="likes" stroke="#ec4899" strokeWidth={2} dot={false} name="Likes" />
+                <Line type="monotone" dataKey="comments" stroke="#f59e0b" strokeWidth={2} dot={false} name="Comments" />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Posts table */}
       <div className="rounded-lg border bg-card">
         <div className="p-4 border-b">
@@ -106,14 +148,14 @@ export default function AnalyticsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {postsData?.data.length === 0 && (
+              {(postsData?.data?.length ?? 0) === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center text-muted-foreground py-12">
                     No analytics data yet. Analytics sync runs daily after publishing.
                   </TableCell>
                 </TableRow>
               )}
-              {postsData?.data.map((row) => (
+              {postsData?.data?.map((row) => (
                 <TableRow key={row.publish_job_id}>
                   <TableCell className="capitalize font-medium">{row.platform}</TableCell>
                   <TableCell className="text-muted-foreground text-xs">
