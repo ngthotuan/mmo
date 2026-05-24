@@ -1,0 +1,19 @@
+title = "Gitleaks config for mmo"
+
+# Extend default gitleaks rules instead of replacing them.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allow placeholder strings in template/example files"
+
+# Whole-file allowlist — these files MUST never contain real secrets by convention.
+paths = [
+    '''\.env\.example$''',
+    '''\.env\.example\..*$''',
+]
+
+# Inline override: any line containing `gitleaks:allow` is skipped (gitleaks v8+).
+regexes = [
+    '''gitleaks:allow''',
+]
