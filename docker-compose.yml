@@ -1,10 +1,10 @@
-version: "3.9"
-
 services:
   backend-api:
+    image: ghcr.io/${IMAGE_OWNER:-ngthotuan}/mmo-backend-api:${APP_VERSION:-latest}
     build:
       context: ./backend
       dockerfile: ../infra/docker/backend.Dockerfile
+      target: runtime-api
     command: /app/bin/api
     restart: unless-stopped
     env_file: .env
@@ -20,26 +20,35 @@ services:
       start_period: 15s
 
   backend-worker:
+    image: ghcr.io/${IMAGE_OWNER:-ngthotuan}/mmo-backend-api:${APP_VERSION:-latest}
     build:
       context: ./backend
       dockerfile: ../infra/docker/backend.Dockerfile
+      target: runtime-api
     command: /app/bin/worker
     restart: unless-stopped
     env_file: .env
     volumes:
       - /tmp/mmo-media:/tmp/mmo-media
+    depends_on:
+      - backend-api
 
   backend-video-worker:
+    image: ghcr.io/${IMAGE_OWNER:-ngthotuan}/mmo-backend-video-worker:${APP_VERSION:-latest}
     build:
       context: ./backend
-      dockerfile: ../infra/docker/ffmpeg.Dockerfile
+      dockerfile: ../infra/docker/backend.Dockerfile
+      target: runtime-video
     command: /app/bin/worker --video-only
     restart: unless-stopped
     env_file: .env
     volumes:
       - /tmp/mmo-media:/tmp/mmo-media
+    depends_on:
+      - backend-api
 
   frontend:
+    image: ghcr.io/${IMAGE_OWNER:-ngthotuan}/mmo-frontend:${APP_VERSION:-latest}
     build:
       context: ./frontend
       dockerfile: ../infra/docker/frontend.Dockerfile

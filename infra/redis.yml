@@ -1,0 +1,32 @@
+# Redis — standalone compose. Self-contained, no .env dependency.
+#
+# Run:
+#   docker compose -f infra/redis.yml up -d
+#
+# Sửa password trong `command:` trước khi chạy lần đầu.
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: mmo-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --requirepass
+      - CHANGE_ME_strong_redis_password
+      - --appendonly
+      - "yes"
+    ports:
+      - "127.0.0.1:6379:6379"   # localhost only — app reach qua host.docker.internal
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "CHANGE_ME_strong_redis_password", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  redis_data:
+    name: mmo_redis_data

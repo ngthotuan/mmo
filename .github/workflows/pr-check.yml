@@ -1,0 +1,157 @@
+name: PR Check
+
+# Runs on every PR targeting main. No image build, no push — only validation.
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write  # for uploading SARIF results to the Security tab
+  pull-requests: read
+
+jobs:
+  # ── Secret scan ─────────────────────────────────────────────────────────────
+  gitleaks:
+    name: Gitleaks (secret scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks needs full history
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Backend syntax + vulnerability ─────────────────────────────────────────
+  backend:
+    name: Backend (vet + build + vuln)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: backend/go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: govulncheck (Go vulnerability scan)
+        uses: golang/govulncheck-action@v1
+        with:
+          work-dir: backend
+          go-version-input: "1.25"
+
+  # ── Frontend syntax + vulnerability ────────────────────────────────────────
+  frontend:
+    name: Frontend (typecheck + build + audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm ci
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: typecheck
+        run: npx tsc --noEmit
+
+      - name: next build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+      - name: npm audit (high+critical only)
+        run: npm audit --audit-level=high
+
+  # ── Migration safety (squawk) ──────────────────────────────────────────────
+  migrations:
+    name: Migrations (squawk lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for diff vs base branch
+
+      - name: Find changed migration files
+        id: changed
+        run: |
+          FILES=$(git diff --name-only --diff-filter=AM \
+            origin/${{ github.base_ref }}...HEAD \
+            -- 'backend/internal/infrastructure/db/migrations/*.sql' || true)
+          if [ -z "$FILES" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No migration changes — skipping squawk"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "files<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$FILES" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            echo "Changed migrations:"
+            echo "$FILES"
+          fi
+
+      - name: Install squawk
+        if: steps.changed.outputs.skip == 'false'
+        run: |
+          curl -sSL -o /tmp/squawk \
+            https://github.com/sbdchd/squawk/releases/download/v2.2.0/squawk-linux-x86_64
+          chmod +x /tmp/squawk
+          sudo mv /tmp/squawk /usr/local/bin/squawk
+          squawk --version
+
+      - name: Lint migrations
+        if: steps.changed.outputs.skip == 'false'
+        run: |
+          # Strip goose directives — squawk doesn't understand them.
+          mkdir -p /tmp/sql-clean
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            sed '/^-- +goose/d' "$f" > "/tmp/sql-clean/$(basename "$f")"
+          done <<< "${{ steps.changed.outputs.files }}"
+          squawk /tmp/sql-clean/*.sql
+
+  # ── Filesystem vuln scan (Trivy) ───────────────────────────────────────────
+  trivy:
+    name: Trivy (filesystem vuln)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy in fs mode
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: "true"
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
