@@ -30,6 +30,7 @@ type Config struct {
 	Reddit       RedditConfig
 	GoogleTrends GoogleTrendsConfig
 	EdgeTTS      EdgeTTSConfig
+	Content      ContentConfig
 	Schedule     ScheduleConfig
 	Channel      ChannelConfig
 	Publish      PublishConfig
@@ -173,7 +174,13 @@ type GoogleTrendsConfig struct {
 type EdgeTTSVoices struct {
 	EnFemale string
 	EnMale   string
+	ViFemale string
 	ViMale   string
+}
+
+type ContentConfig struct {
+	Language string
+	Geo      string
 }
 
 type EdgeTTSConfig struct {
@@ -186,6 +193,7 @@ type ScheduleConfig struct {
 	DiscoverTrends string
 	SyncAnalytics  string
 	RefreshTokens  string
+	AutoPilotTick  string
 }
 
 type ChannelConfig struct {
@@ -227,6 +235,7 @@ type rawConfig struct {
 	Reddit       rawReddit       `yaml:"reddit"`
 	GoogleTrends rawGoogleTrends `yaml:"google_trends"`
 	EdgeTTS      rawEdgeTTS      `yaml:"edgetts"`
+	Content      rawContent      `yaml:"content"`
 	Schedule     rawSchedule     `yaml:"schedule"`
 	Channel      rawChannel      `yaml:"channel"`
 	Publish      rawPublish      `yaml:"publish"`
@@ -370,7 +379,13 @@ type rawGoogleTrends struct {
 type rawEdgeTTSVoices struct {
 	EnFemale string `yaml:"en_female"`
 	EnMale   string `yaml:"en_male"`
+	ViFemale string `yaml:"vi_female"`
 	ViMale   string `yaml:"vi_male"`
+}
+
+type rawContent struct {
+	Language string `yaml:"language"`
+	Geo      string `yaml:"geo"`
 }
 
 type rawEdgeTTS struct {
@@ -383,6 +398,7 @@ type rawSchedule struct {
 	DiscoverTrends string `yaml:"discover_trends"`
 	SyncAnalytics  string `yaml:"sync_analytics"`
 	RefreshTokens  string `yaml:"refresh_tokens"`
+	AutoPilotTick  string `yaml:"auto_pilot_tick"`
 }
 
 type rawChannel struct {
@@ -542,14 +558,20 @@ func Load() *Config {
 			Voices: EdgeTTSVoices{
 				EnFemale: raw.EdgeTTS.Voices.EnFemale,
 				EnMale:   raw.EdgeTTS.Voices.EnMale,
+				ViFemale: raw.EdgeTTS.Voices.ViFemale,
 				ViMale:   raw.EdgeTTS.Voices.ViMale,
 			},
+		},
+		Content: ContentConfig{
+			Language: raw.Content.Language,
+			Geo:      raw.Content.Geo,
 		},
 		Schedule: ScheduleConfig{
 			CheckPublish:   raw.Schedule.CheckPublish,
 			DiscoverTrends: raw.Schedule.DiscoverTrends,
 			SyncAnalytics:  raw.Schedule.SyncAnalytics,
 			RefreshTokens:  raw.Schedule.RefreshTokens,
+			AutoPilotTick:  raw.Schedule.AutoPilotTick,
 		},
 		Channel: ChannelConfig{
 			FacebookTokenExpiry: mustDuration(raw.Channel.FacebookTokenExpiry, "channel.facebook_token_expiry"),

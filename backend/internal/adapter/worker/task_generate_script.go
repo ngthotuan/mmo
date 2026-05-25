@@ -20,6 +20,7 @@ type ScriptGenHandler struct {
 	gemini             *gemini.Client
 	queueClient        *asynq.Client
 	targetDurationSecs int
+	language           string
 }
 
 func NewScriptGenHandler(
@@ -28,6 +29,7 @@ func NewScriptGenHandler(
 	geminiClient *gemini.Client,
 	queueClient *asynq.Client,
 	targetDurationSecs int,
+	language string,
 ) *ScriptGenHandler {
 	return &ScriptGenHandler{
 		trendRepo:          trendRepo,
@@ -35,6 +37,7 @@ func NewScriptGenHandler(
 		gemini:             geminiClient,
 		queueClient:        queueClient,
 		targetDurationSecs: targetDurationSecs,
+		language:           language,
 	}
 }
 
@@ -72,7 +75,7 @@ func (h *ScriptGenHandler) ProcessTask(ctx context.Context, task *asynq.Task) er
 	}
 	platform := p.Platforms[0]
 
-	result, err := h.gemini.GenerateScript(ctx, topic.Title, p.Niche, platform, h.targetDurationSecs)
+	result, err := h.gemini.GenerateScript(ctx, topic.Title, p.Niche, platform, h.targetDurationSecs, h.language)
 	if err != nil {
 		logger.Error("gemini script generation failed", zap.Error(err))
 		return err

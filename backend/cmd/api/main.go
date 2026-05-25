@@ -49,6 +49,7 @@ func main() {
 	publishRepo     := repository.NewPublishJobRepo(db)
 	analyticsRepo   := repository.NewAnalyticsRepo(db)
 	productRepo     := repository.NewProductRepo(db)
+	autoPilotRepo   := repository.NewAutoPilotRepo(db)
 
 	// ─── Infrastructure ───────────────────────────────────────────────────────
 	r2, err := storage.NewR2(cfg.R2)
@@ -75,11 +76,12 @@ func main() {
 
 	// ─── Use cases ───────────────────────────────────────────────────────────
 	channelUC  := usecase.NewChannelUsecase(channelRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey, cfg.Channel.FacebookTokenExpiry, redisClient)
-	contentUC  := usecase.NewContentUsecase(trendRepo, contentPlanRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs)
+	contentUC  := usecase.NewContentUsecase(trendRepo, contentPlanRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language)
 	videoUC    := usecase.NewVideoUsecase(videoJobRepo, videoTemplRepo, r2, queueClient, cfg.Video.PresignedURLTTL)
 	publishUC   := usecase.NewPublishUsecase(publishRepo, videoJobRepo, channelRepo, queueClient, cfg.Publish.MinScheduleBeforeNow)
 	analyticsUC := usecase.NewAnalyticsUsecase(analyticsRepo)
 	productUC   := usecase.NewProductUsecase(productRepo, channelRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey)
+	autoPilotUC := usecase.NewAutoPilotUsecase(autoPilotRepo, trendRepo, contentPlanRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language)
 
 	// ─── Handlers ────────────────────────────────────────────────────────────
 	healthHandler  := handler.NewHealthHandler(db)
@@ -91,6 +93,7 @@ func main() {
 	analyticsHandler := handler.NewAnalyticsHandler(analyticsUC)
 	pipelineHandler  := handler.NewPipelineHandler(videoJobRepo, publishRepo)
 	productHandler   := handler.NewProductHandler(productUC)
+	autoPilotHandler := handler.NewAutoPilotHandler(autoPilotUC)
 
 	// ─── Router ──────────────────────────────────────────────────────────────
 	r := gin.New()
@@ -138,8 +141,10 @@ func main() {
 				ct.POST("/:id/generate-script", contentHandler.RegenerateScript)
 				ct.DELETE("/:id",               contentHandler.DeletePlan)
 			}
-			protected.GET("/trends",           contentHandler.ListTrends)
-			protected.POST("/trends/discover", contentHandler.TriggerDiscover)
+			protected.GET("/trends",                 contentHandler.ListTrends)
+			protected.POST("/trends/discover",       contentHandler.TriggerDiscover)
+			protected.POST("/trends/bulk-reject",    contentHandler.BulkRejectTrends)
+			ct.POST("/bulk-action",                  contentHandler.BulkActionPlans)
 
 			// ─── Videos ──────────────────────────────────────────────────────
 			vid := protected.Group("/videos")
@@ -187,6 +192,18 @@ func main() {
 			}
 			pub.GET("/:id/products",  productHandler.ListByPublishJob)
 			pub.POST("/:id/products", productHandler.TagPublishJob)
+
+			// ─── Auto Pilot ──────────────────────────────────────────────────
+			ap := protected.Group("/auto-pilot")
+			{
+				ap.GET("",              autoPilotHandler.List)
+				ap.POST("",             autoPilotHandler.Create)
+				ap.GET("/:id",          autoPilotHandler.Get)
+				ap.PUT("/:id",          autoPilotHandler.Update)
+				ap.PUT("/:id/toggle",   autoPilotHandler.Toggle)
+				ap.DELETE("/:id",       autoPilotHandler.Delete)
+				ap.POST("/:id/run",     autoPilotHandler.RunNow)
+			}
 		}
 	}
 

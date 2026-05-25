@@ -107,17 +107,23 @@ google_trends:
   http_timeout: "15s"
 
 edgetts:
-  default_voice: "en-US-AriaNeural"
+  default_voice: "vi-VN-HoaiMyNeural"
   voices:
     en_female: "en-US-AriaNeural"
     en_male: "en-US-GuyNeural"
+    vi_female: "vi-VN-HoaiMyNeural"
     vi_male: "vi-VN-NamMinhNeural"
+
+content:
+  language: "vi"
+  geo: "VN"
 
 schedule:
   check_publish: "* * * * *"
   discover_trends: "0 */6 * * *"
   sync_analytics: "0 2 * * *"
   refresh_tokens: "0 */12 * * *"
+  auto_pilot_tick: "*/15 * * * *"
 
 channel:
   facebook_token_expiry: "1320h"

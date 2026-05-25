@@ -205,7 +205,11 @@ export default function ContentDetailPage({ params }: Props) {
                     onChange={(e) => setVoice(e.target.value)}
                     className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
                   >
-                    <option value="">Default (en-US-AriaNeural)</option>
+                    <option value="">Mặc định (vi-VN-HoaiMyNeural)</option>
+                    <optgroup label="Tiếng Việt">
+                      <option value="vi-VN-HoaiMyNeural">Hoài My (Nữ) ⭐</option>
+                      <option value="vi-VN-NamMinhNeural">Nam Minh (Nam)</option>
+                    </optgroup>
                     <optgroup label="English (US)">
                       <option value="en-US-AriaNeural">Aria (Female)</option>
                       <option value="en-US-JennyNeural">Jenny (Female)</option>
@@ -222,12 +226,8 @@ export default function ContentDetailPage({ params }: Props) {
                       <option value="en-AU-NatashaNeural">Natasha (Female)</option>
                       <option value="en-AU-WilliamNeural">William (Male)</option>
                     </optgroup>
-                    <optgroup label="Vietnamese">
-                      <option value="vi-VN-HoaiMyNeural">Hoài My (Female)</option>
-                      <option value="vi-VN-NamMinhNeural">Nam Minh (Male)</option>
-                    </optgroup>
                   </select>
-                  <p className="mt-1 text-xs text-muted-foreground">Used for TTS narration</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Giọng đọc TTS cho video</p>
                 </CardContent>
               </Card>
 

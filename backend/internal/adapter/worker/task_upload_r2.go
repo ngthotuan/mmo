@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"mmo/internal/adapter/repository"
+	"mmo/internal/domain/content"
+	"mmo/internal/domain/publish"
 	"mmo/internal/domain/video"
 	"mmo/internal/infrastructure/ffmpeg"
 	"mmo/internal/infrastructure/storage"
@@ -18,10 +21,13 @@ import (
 )
 
 type R2UploadHandler struct {
-	videoRepo *repository.VideoJobRepo
-	planRepo  *repository.ContentPlanRepo
-	r2        *storage.R2Client
-	assembler *ffmpeg.Assembler
+	videoRepo     *repository.VideoJobRepo
+	planRepo      *repository.ContentPlanRepo
+	r2            *storage.R2Client
+	assembler     *ffmpeg.Assembler
+	autoPilotRepo *repository.AutoPilotRepo
+	channelRepo   *repository.ChannelRepoWithAll
+	publishRepo   *repository.PublishJobRepo
 }
 
 func NewR2UploadHandler(
@@ -29,12 +35,18 @@ func NewR2UploadHandler(
 	planRepo *repository.ContentPlanRepo,
 	r2 *storage.R2Client,
 	assembler *ffmpeg.Assembler,
+	autoPilotRepo *repository.AutoPilotRepo,
+	channelRepo *repository.ChannelRepoWithAll,
+	publishRepo *repository.PublishJobRepo,
 ) *R2UploadHandler {
 	return &R2UploadHandler{
-		videoRepo: videoRepo,
-		planRepo:  planRepo,
-		r2:        r2,
-		assembler: assembler,
+		videoRepo:     videoRepo,
+		planRepo:      planRepo,
+		r2:            r2,
+		assembler:     assembler,
+		autoPilotRepo: autoPilotRepo,
+		channelRepo:   channelRepo,
+		publishRepo:   publishRepo,
 	}
 }
 
@@ -85,6 +97,15 @@ func (h *R2UploadHandler) ProcessTask(ctx context.Context, task *asynq.Task) err
 	// Update content plan status
 	if job.ContentPlanID != uuid.Nil {
 		_ = h.planRepo.UpdateStatus(ctx, job.ContentPlanID, "video_ready")
+
+		// Auto-publish: if this plan was created by an auto-pilot profile with
+		// AutoPublish=true, create scheduled publish_jobs for the user's active
+		// channels matching the profile's target platforms. The check_publish
+		// cron picks them up within 1 minute.
+		if err := h.maybeAutoPublish(ctx, job.ContentPlanID, job.ID); err != nil {
+			logger.Warn("auto-publish failed (continuing)",
+				zap.String("plan_id", job.ContentPlanID.String()), zap.Error(err))
+		}
 	}
 
 	// Clean up temp files
@@ -92,4 +113,72 @@ func (h *R2UploadHandler) ProcessTask(ctx context.Context, task *asynq.Task) err
 
 	logger.Info("video uploaded, job done", zap.String("job_id", p.JobID), zap.String("url", publicURL))
 	return nil
+}
+
+// maybeAutoPublish creates publish_jobs when the plan belongs to an auto-pilot
+// profile with auto_publish enabled. Each (platform, channel) pair gets its own
+// publish_job, scheduled +1 minute so the check_publish cron picks it up cleanly.
+func (h *R2UploadHandler) maybeAutoPublish(ctx context.Context, planID, videoJobID uuid.UUID) error {
+	plan, err := h.planRepo.GetByID(ctx, planID)
+	if err != nil || plan.AutoPilotProfileID == nil {
+		return nil
+	}
+	profile, err := h.autoPilotRepo.GetByID(ctx, *plan.AutoPilotProfileID)
+	if err != nil || !profile.AutoPublish {
+		return nil
+	}
+
+	channels, err := h.channelRepo.ListByUserID(ctx, profile.UserID)
+	if err != nil {
+		return err
+	}
+
+	caption, hashtags := extractCaptionAndHashtags(plan)
+	scheduledAt := time.Now().Add(1 * time.Minute)
+
+	created := 0
+	for _, target := range profile.TargetPlatforms {
+		for _, ch := range channels {
+			if !ch.IsActive || !strings.EqualFold(string(ch.Platform), target) {
+				continue
+			}
+			pcopy := planID
+			pj := &publish.Job{
+				ID:            uuid.New(),
+				VideoJobID:    videoJobID,
+				ChannelID:     ch.ID,
+				ContentPlanID: &pcopy,
+				Platform:      string(ch.Platform),
+				Caption:       caption,
+				Hashtags:      hashtags,
+				ScheduledAt:   &scheduledAt,
+				Status:        publish.JobStatusScheduled,
+			}
+			if err := h.publishRepo.Create(ctx, pj); err != nil {
+				logger.Warn("auto-publish: create publish_job failed",
+					zap.String("channel_id", ch.ID.String()), zap.Error(err))
+				continue
+			}
+			created++
+		}
+	}
+	if created > 0 {
+		_ = h.planRepo.UpdateStatus(ctx, planID, content.StatusScheduled)
+		logger.Info("auto-publish queued",
+			zap.String("plan_id", planID.String()), zap.Int("jobs", created))
+	}
+	return nil
+}
+
+func extractCaptionAndHashtags(plan *content.ContentPlan) (string, []string) {
+	var meta struct {
+		Caption  string   `json:"caption"`
+		Hashtags []string `json:"hashtags"`
+	}
+	_ = json.Unmarshal(plan.ScriptMetadata, &meta)
+	caption := meta.Caption
+	if caption == "" {
+		caption = plan.Title
+	}
+	return caption, meta.Hashtags
 }

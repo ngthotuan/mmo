@@ -14,6 +14,7 @@ import {
   Zap,
   ShoppingBag,
   Send,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { authApi } from "@/lib/api/auth";
@@ -37,6 +38,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
   {
     label: "Pipeline",
     items: [
+      { href: "/auto-pilot", label: "Auto Pilot", icon: Bot },
       { href: "/content", label: "Content", icon: FileText },
       { href: "/videos", label: "Videos", icon: Video },
       { href: "/publish", label: "Publish", icon: Send },

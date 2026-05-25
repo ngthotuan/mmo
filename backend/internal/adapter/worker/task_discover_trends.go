@@ -11,6 +11,7 @@ import (
 	"mmo/internal/domain/content"
 	"mmo/internal/integration/googletrends"
 	"mmo/internal/integration/reddit"
+	"mmo/internal/integration/vnexpress"
 	"mmo/internal/integration/youtube"
 	"mmo/pkg/config"
 	"mmo/pkg/logger"
@@ -18,11 +19,12 @@ import (
 )
 
 type TrendDiscoveryHandler struct {
-	trendRepo     *repository.TrendRepo
-	googleClient  *googletrends.Client
-	youtubeClient *youtube.Client
-	redditClient  *reddit.Client
-	cfg           *config.Config
+	trendRepo       *repository.TrendRepo
+	googleClient    *googletrends.Client
+	youtubeClient   *youtube.Client
+	redditClient    *reddit.Client
+	vnexpressClient *vnexpress.Client
+	cfg             *config.Config
 }
 
 func NewTrendDiscoveryHandler(
@@ -33,11 +35,12 @@ func NewTrendDiscoveryHandler(
 	redditClient *reddit.Client,
 ) *TrendDiscoveryHandler {
 	return &TrendDiscoveryHandler{
-		trendRepo:     trendRepo,
-		googleClient:  googleClient,
-		youtubeClient: youtubeClient,
-		redditClient:  redditClient,
-		cfg:           cfg,
+		trendRepo:       trendRepo,
+		googleClient:    googleClient,
+		youtubeClient:   youtubeClient,
+		redditClient:    redditClient,
+		vnexpressClient: vnexpress.New(cfg.MediaCollect.HTTPTimeout),
+		cfg:             cfg,
 	}
 }
 
@@ -47,9 +50,14 @@ func (h *TrendDiscoveryHandler) ProcessTask(ctx context.Context, task *asynq.Tas
 	}
 	_ = json.Unmarshal(task.Payload(), &payload)
 
+	geo := h.cfg.Content.Geo
+	if geo == "" {
+		geo = "US"
+	}
+
 	total := 0
 
-	gTrends, err := h.googleClient.FetchDailyTrends(ctx, "US")
+	gTrends, err := h.googleClient.FetchDailyTrends(ctx, geo)
 	if err != nil {
 		logger.Warn("google trends fetch failed", zap.Error(err))
 	} else {
@@ -61,7 +69,7 @@ func (h *TrendDiscoveryHandler) ProcessTask(ctx context.Context, task *asynq.Tas
 		}
 	}
 
-	ytVideos, err := h.youtubeClient.FetchTrending(ctx, "US", "")
+	ytVideos, err := h.youtubeClient.FetchTrending(ctx, geo, "")
 	if err != nil {
 		logger.Warn("youtube fetch failed", zap.Error(err))
 	} else {
@@ -73,7 +81,7 @@ func (h *TrendDiscoveryHandler) ProcessTask(ctx context.Context, task *asynq.Tas
 		}
 	}
 
-	subreddits := []string{"marketing", "entrepreneur", "personalfinance", "fitness", "technology"}
+	subreddits := h.getSubreddits()
 	for _, sub := range subreddits {
 		posts, err := h.redditClient.FetchTopPosts(ctx, sub, "day", 5)
 		if err != nil {
@@ -88,8 +96,34 @@ func (h *TrendDiscoveryHandler) ProcessTask(ctx context.Context, task *asynq.Tas
 		}
 	}
 
-	logger.Info("trend discovery complete", zap.Int("new_trends", total))
+	// Vietnamese news source: VnExpress RSS (only when geo is VN)
+	if geo == "VN" {
+		vnItems, err := h.vnexpressClient.FetchTrending(ctx, 5)
+		if err != nil {
+			logger.Warn("vnexpress fetch failed", zap.Error(err))
+		} else {
+			for _, item := range vnItems {
+				if err := h.saveTrend(ctx, payload.UserID, "vnexpress", item.Title, item.Description,
+					item.Keywords, 0, item.SourceURL, item); err == nil {
+					total++
+				}
+			}
+		}
+	}
+
+	logger.Info("trend discovery complete", zap.Int("new_trends", total), zap.String("geo", geo))
 	return nil
+}
+
+func (h *TrendDiscoveryHandler) getSubreddits() []string {
+	if h.cfg.Content.Language == "vi" {
+		return []string{
+			"VietNam", "vietnam", "viettech",
+			"kinh_doanh", "hoclaptrinh",
+			"marketing", "entrepreneur", "technology",
+		}
+	}
+	return []string{"marketing", "entrepreneur", "personalfinance", "fitness", "technology"}
 }
 
 func (h *TrendDiscoveryHandler) saveTrend(

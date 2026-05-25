@@ -20,6 +20,7 @@ type ContentUsecase struct {
 	gemini             *gemini.Client
 	queueClient        *asynq.Client
 	targetDurationSecs int
+	language           string
 }
 
 func NewContentUsecase(
@@ -28,6 +29,7 @@ func NewContentUsecase(
 	geminiClient *gemini.Client,
 	queueClient *asynq.Client,
 	targetDurationSecs int,
+	language string,
 ) *ContentUsecase {
 	return &ContentUsecase{
 		trendRepo:          trendRepo,
@@ -35,6 +37,7 @@ func NewContentUsecase(
 		gemini:             geminiClient,
 		queueClient:        queueClient,
 		targetDurationSecs: targetDurationSecs,
+		language:           language,
 	}
 }
 
@@ -139,7 +142,7 @@ func (uc *ContentUsecase) RegenerateScript(ctx context.Context, userID, planID u
 	}
 
 	result, err := uc.gemini.GenerateScript(ctx, plan.Title, plan.Niche,
-		firstPlatform(plan.TargetPlatforms), uc.targetDurationSecs)
+		firstPlatform(plan.TargetPlatforms), uc.targetDurationSecs, uc.language)
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +159,46 @@ func (uc *ContentUsecase) RegenerateScript(ctx context.Context, userID, planID u
 		return nil, err
 	}
 	return plan, nil
+}
+
+// BulkActionPlans runs an action (approve, reject, delete) on multiple content plans.
+// It continues on individual errors and returns the count of successes.
+func (uc *ContentUsecase) BulkActionPlans(ctx context.Context, userID uuid.UUID, action string, planIDs []uuid.UUID) (int, error) {
+	if len(planIDs) == 0 {
+		return 0, apperr.New(400, "no plan IDs provided")
+	}
+	done := 0
+	for _, id := range planIDs {
+		var err error
+		switch action {
+		case "approve":
+			err = uc.ApprovePlan(ctx, userID, id)
+		case "reject":
+			err = uc.RejectPlan(ctx, userID, id)
+		case "delete":
+			err = uc.DeletePlan(ctx, userID, id)
+		default:
+			return 0, apperr.New(400, "unknown action: "+action)
+		}
+		if err == nil {
+			done++
+		}
+	}
+	return done, nil
+}
+
+// BulkRejectTrends marks multiple trend topics as rejected.
+func (uc *ContentUsecase) BulkRejectTrends(ctx context.Context, userID uuid.UUID, topicIDs []uuid.UUID) (int, error) {
+	if len(topicIDs) == 0 {
+		return 0, apperr.New(400, "no topic IDs provided")
+	}
+	done := 0
+	for _, id := range topicIDs {
+		if err := uc.trendRepo.UpdateStatus(ctx, id, "rejected"); err == nil {
+			done++
+		}
+	}
+	return done, nil
 }
 
 // DeletePlan deletes a plan (draft or rejected only).
@@ -177,7 +220,7 @@ func (uc *ContentUsecase) GenerateScriptForTrend(ctx context.Context, userID, to
 		return nil, err
 	}
 
-	result, err := uc.gemini.GenerateScript(ctx, topic.Title, niche, firstPlatform(platforms), uc.targetDurationSecs)
+	result, err := uc.gemini.GenerateScript(ctx, topic.Title, niche, firstPlatform(platforms), uc.targetDurationSecs, uc.language)
 	if err != nil {
 		return nil, err
 	}

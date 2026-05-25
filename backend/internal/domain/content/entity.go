@@ -41,19 +41,20 @@ type ScriptMetadata struct {
 }
 
 type ContentPlan struct {
-	ID              uuid.UUID  `db:"id"`
-	UserID          uuid.UUID  `db:"user_id"`
-	TrendTopicID    *uuid.UUID `db:"trend_topic_id"`
-	VideoTemplateID *uuid.UUID `db:"video_template_id"`
-	Title           string     `db:"title"`
-	Niche           string     `db:"niche"`
-	TargetPlatforms []string   `db:"target_platforms"`
-	Script          string     `db:"script"`
-	ScriptMetadata  []byte     `db:"script_metadata"` // JSONB
-	Status          Status     `db:"status"`
-	AutoApprove     bool       `db:"auto_approve"`
-	Voice           string     `db:"voice"`
-	Notes           string     `db:"notes"`
-	CreatedAt       time.Time  `db:"created_at"`
-	UpdatedAt       time.Time  `db:"updated_at"`
+	ID                 uuid.UUID  `db:"id"`
+	UserID             uuid.UUID  `db:"user_id"`
+	TrendTopicID       *uuid.UUID `db:"trend_topic_id"`
+	VideoTemplateID    *uuid.UUID `db:"video_template_id"`
+	AutoPilotProfileID *uuid.UUID `db:"auto_pilot_profile_id"`
+	Title              string     `db:"title"`
+	Niche              string     `db:"niche"`
+	TargetPlatforms    []string   `db:"target_platforms"`
+	Script             string     `db:"script"`
+	ScriptMetadata     []byte     `db:"script_metadata"` // JSONB
+	Status             Status     `db:"status"`
+	AutoApprove        bool       `db:"auto_approve"`
+	Voice              string     `db:"voice"`
+	Notes              string     `db:"notes"`
+	CreatedAt          time.Time  `db:"created_at"`
+	UpdatedAt          time.Time  `db:"updated_at"`
 }

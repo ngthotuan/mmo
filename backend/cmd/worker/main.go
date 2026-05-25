@@ -22,6 +22,7 @@ import (
 	"mmo/internal/integration/reddit"
 	"mmo/internal/integration/tiktok"
 	"mmo/internal/integration/youtube"
+	"mmo/internal/usecase"
 	"mmo/pkg/config"
 	"mmo/pkg/logger"
 	"go.uber.org/zap"
@@ -49,6 +50,7 @@ func main() {
 	publishRepo   := repository.NewPublishJobRepo(db)
 	analyticsRepo := repository.NewAnalyticsRepo(db)
 	productRepo   := repository.NewProductRepo(db)
+	autoPilotRepo := repository.NewAutoPilotRepo(db)
 
 	// ─── Infrastructure ───────────────────────────────────────────────────────
 	r2, err := storage.NewR2(cfg.R2)
@@ -75,14 +77,16 @@ func main() {
 	// ─── Task handlers ───────────────────────────────────────────────────────
 	refreshHandler  := workerhandler.NewRefreshTokensHandler(channelRepo, tiktokClient, cfg.Auth.EncryptionKey)
 	discoverHandler := workerhandler.NewTrendDiscoveryHandler(trendRepo, cfg, googleClient, youtubeClient, redditClient)
-	scriptHandler   := workerhandler.NewScriptGenHandler(trendRepo, planRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs)
+	scriptHandler   := workerhandler.NewScriptGenHandler(trendRepo, planRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language)
 	mediaHandler    := workerhandler.NewMediaCollectHandler(planRepo, videoJobRepo, pexelsClient, pixabayClient, r2, queueClient, assembler, cfg.MediaCollect.HTTPTimeout, cfg.Video.MaxClips)
 	ttsHandler      := workerhandler.NewTTSHandler(videoJobRepo, ttsClient, r2, queueClient, assembler)
 	assemblyHandler := workerhandler.NewVideoAssemblyHandler(videoJobRepo, assembler, r2, queueClient)
-	uploadHandler        := workerhandler.NewR2UploadHandler(videoJobRepo, planRepo, r2, assembler)
+	uploadHandler        := workerhandler.NewR2UploadHandler(videoJobRepo, planRepo, r2, assembler, autoPilotRepo, channelRepo, publishRepo)
 	publishHandler       := workerhandler.NewPublishHandler(publishRepo, channelRepo, videoJobRepo, productRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey)
 	checkPublishHandler  := workerhandler.NewCheckPublishHandler(publishRepo, queueClient)
 	analyticsSyncHandler := workerhandler.NewAnalyticsSyncHandler(publishRepo, channelRepo, analyticsRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey)
+	autoPilotUC          := usecase.NewAutoPilotUsecase(autoPilotRepo, trendRepo, planRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language)
+	autoPilotHandler     := workerhandler.NewAutoPilotTickHandler(autoPilotUC)
 
 	// ─── Asynq server ────────────────────────────────────────────────────────
 	srv := queue.NewServer(cfg.Redis.URL, *videoOnly, cfg.Queue)
@@ -102,6 +106,7 @@ func main() {
 	if !*videoOnly {
 		mux.HandleFunc(queue.TaskCheckPublish,   checkPublishHandler.ProcessTask)
 		mux.HandleFunc(queue.TaskSyncAnalytics,  analyticsSyncHandler.ProcessTask)
+		mux.HandleFunc(queue.TaskAutoPilotTick,  autoPilotHandler.ProcessTask)
 	}
 
 	// ─── Cron scheduler (non-video worker only) ───────────────────────────────
@@ -118,6 +123,7 @@ func main() {
 			{cfg.Schedule.DiscoverTrends, queue.TaskDiscoverTrends, queue.QueueLow},
 			{cfg.Schedule.SyncAnalytics,  queue.TaskSyncAnalytics,  queue.QueueLow},
 			{cfg.Schedule.RefreshTokens,  queue.TaskRefreshTokens,  queue.QueueLow},
+			{cfg.Schedule.AutoPilotTick,  queue.TaskAutoPilotTick,  queue.QueueLow},
 		}
 		for _, s := range schedules {
 			if _, err := scheduler.Register(s.cron,

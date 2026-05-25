@@ -18,6 +18,7 @@ const (
 	TaskCleanupTemp     = "task:cleanup_temp"
 	TaskRefreshTokens   = "task:refresh_tokens"
 	TaskCheckPublish    = "task:check_publish"
+	TaskAutoPilotTick   = "task:auto_pilot_tick"
 
 	// Queue names
 	QueueCritical = "critical"

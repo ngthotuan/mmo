@@ -52,4 +52,14 @@ export const contentApi = {
   deletePlan: async (id: string): Promise<void> => {
     await apiClient.delete(`/api/v1/content/${id}`);
   },
+
+  bulkActionPlans: async (action: "approve" | "reject" | "delete", ids: string[]): Promise<{ processed: number }> => {
+    const { data } = await apiClient.post("/api/v1/content/bulk-action", { action, ids });
+    return data;
+  },
+
+  bulkRejectTrends: async (ids: string[]): Promise<{ processed: number }> => {
+    const { data } = await apiClient.post("/api/v1/trends/bulk-reject", { ids });
+    return data;
+  },
 };

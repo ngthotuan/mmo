@@ -112,6 +112,39 @@ func (r *TrendRepo) UpdateStatus(ctx context.Context, id uuid.UUID, status strin
 	return err
 }
 
+// ListNewMatching returns up to `limit` new trend topics matching the filter/sources.
+// `filter` is a case-insensitive substring match against title; empty = no filter.
+// `sources` is an allowlist (e.g. ["google_trends","vnexpress"]); empty = any source.
+// Trends with NULL user_id (system-wide discovery) and trends owned by the user are both included.
+func (r *TrendRepo) ListNewMatching(ctx context.Context, userID uuid.UUID, filter string, sources []string, limit int) ([]*content.TrendTopic, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	args := []any{userID}
+	where := "status = 'new' AND (user_id IS NULL OR user_id = $1)"
+	if filter != "" {
+		args = append(args, "%"+filter+"%")
+		where += fmt.Sprintf(" AND title ILIKE $%d", len(args))
+	}
+	if len(sources) > 0 {
+		args = append(args, pq.Array(sources))
+		where += fmt.Sprintf(" AND source = ANY($%d)", len(args))
+	}
+	args = append(args, limit)
+	q := fmt.Sprintf(
+		"SELECT * FROM trend_topics WHERE %s ORDER BY trending_score DESC, discovered_at DESC LIMIT $%d",
+		where, len(args))
+	var rows []trendTopicRow
+	if err := r.db.SelectContext(ctx, &rows, q, args...); err != nil {
+		return nil, err
+	}
+	out := make([]*content.TrendTopic, len(rows))
+	for i, row := range rows {
+		out[i] = row.toEntity()
+	}
+	return out, nil
+}
+
 // ExistsBySourceAndTitle prevents duplicate trend topics from the same source.
 func (r *TrendRepo) ExistsBySourceAndTitle(ctx context.Context, source, title string) (bool, error) {
 	var count int
@@ -130,50 +163,52 @@ func NewContentPlanRepo(db *sqlx.DB) *ContentPlanRepo { return &ContentPlanRepo{
 
 // contentPlanRow is a scan target that handles VARCHAR(50)[] → []string via pq.StringArray.
 type contentPlanRow struct {
-	ID              uuid.UUID      `db:"id"`
-	UserID          uuid.UUID      `db:"user_id"`
-	TrendTopicID    *uuid.UUID     `db:"trend_topic_id"`
-	VideoTemplateID *uuid.UUID     `db:"video_template_id"`
-	Title           string         `db:"title"`
-	Niche           string         `db:"niche"`
-	TargetPlatforms pq.StringArray `db:"target_platforms"`
-	Script          string         `db:"script"`
-	ScriptMetadata  []byte         `db:"script_metadata"`
-	Status          content.Status `db:"status"`
-	AutoApprove     bool           `db:"auto_approve"`
-	Voice           string         `db:"voice"`
-	Notes           string         `db:"notes"`
-	CreatedAt       time.Time      `db:"created_at"`
-	UpdatedAt       time.Time      `db:"updated_at"`
+	ID                 uuid.UUID      `db:"id"`
+	UserID             uuid.UUID      `db:"user_id"`
+	TrendTopicID       *uuid.UUID     `db:"trend_topic_id"`
+	VideoTemplateID    *uuid.UUID     `db:"video_template_id"`
+	AutoPilotProfileID *uuid.UUID     `db:"auto_pilot_profile_id"`
+	Title              string         `db:"title"`
+	Niche              string         `db:"niche"`
+	TargetPlatforms    pq.StringArray `db:"target_platforms"`
+	Script             string         `db:"script"`
+	ScriptMetadata     []byte         `db:"script_metadata"`
+	Status             content.Status `db:"status"`
+	AutoApprove        bool           `db:"auto_approve"`
+	Voice              string         `db:"voice"`
+	Notes              string         `db:"notes"`
+	CreatedAt          time.Time      `db:"created_at"`
+	UpdatedAt          time.Time      `db:"updated_at"`
 }
 
 func (row contentPlanRow) toEntity() *content.ContentPlan {
 	return &content.ContentPlan{
-		ID:              row.ID,
-		UserID:          row.UserID,
-		TrendTopicID:    row.TrendTopicID,
-		VideoTemplateID: row.VideoTemplateID,
-		Title:           row.Title,
-		Niche:           row.Niche,
-		TargetPlatforms: []string(row.TargetPlatforms),
-		Script:          row.Script,
-		ScriptMetadata:  row.ScriptMetadata,
-		Status:          row.Status,
-		AutoApprove:     row.AutoApprove,
-		Voice:           row.Voice,
-		Notes:           row.Notes,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
+		ID:                 row.ID,
+		UserID:             row.UserID,
+		TrendTopicID:       row.TrendTopicID,
+		VideoTemplateID:    row.VideoTemplateID,
+		AutoPilotProfileID: row.AutoPilotProfileID,
+		Title:              row.Title,
+		Niche:              row.Niche,
+		TargetPlatforms:    []string(row.TargetPlatforms),
+		Script:             row.Script,
+		ScriptMetadata:     row.ScriptMetadata,
+		Status:             row.Status,
+		AutoApprove:        row.AutoApprove,
+		Voice:              row.Voice,
+		Notes:              row.Notes,
+		CreatedAt:          row.CreatedAt,
+		UpdatedAt:          row.UpdatedAt,
 	}
 }
 
 func (r *ContentPlanRepo) Create(ctx context.Context, p *content.ContentPlan) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO content_plans
-			(id, user_id, trend_topic_id, video_template_id, title, niche,
+			(id, user_id, trend_topic_id, video_template_id, auto_pilot_profile_id, title, niche,
 			 target_platforms, script, script_metadata, status, auto_approve, voice, notes)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		p.ID, p.UserID, p.TrendTopicID, p.VideoTemplateID, p.Title, p.Niche,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+		p.ID, p.UserID, p.TrendTopicID, p.VideoTemplateID, p.AutoPilotProfileID, p.Title, p.Niche,
 		pq.Array(p.TargetPlatforms), p.Script, p.ScriptMetadata,
 		p.Status, p.AutoApprove, p.Voice, p.Notes,
 	)

@@ -255,6 +255,59 @@ func (h *ContentHandler) CreateFromTrend(c *gin.Context) {
 	c.JSON(http.StatusCreated, toPlanDTO(plan))
 }
 
+// POST /content/bulk-action
+func (h *ContentHandler) BulkActionPlans(c *gin.Context) {
+	userID := mustParseUserID(c)
+	var body struct {
+		Action string   `json:"action" binding:"required"`
+		IDs    []string `json:"ids"    binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, apperr.ErrBadRequest)
+		return
+	}
+	planIDs := make([]uuid.UUID, 0, len(body.IDs))
+	for _, raw := range body.IDs {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			continue
+		}
+		planIDs = append(planIDs, id)
+	}
+	done, err := h.uc.BulkActionPlans(c.Request.Context(), userID, body.Action, planIDs)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"processed": done})
+}
+
+// POST /trends/bulk-reject
+func (h *ContentHandler) BulkRejectTrends(c *gin.Context) {
+	userID := mustParseUserID(c)
+	var body struct {
+		IDs []string `json:"ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, apperr.ErrBadRequest)
+		return
+	}
+	topicIDs := make([]uuid.UUID, 0, len(body.IDs))
+	for _, raw := range body.IDs {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			continue
+		}
+		topicIDs = append(topicIDs, id)
+	}
+	done, err := h.uc.BulkRejectTrends(c.Request.Context(), userID, topicIDs)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"processed": done})
+}
+
 // DELETE /content/:id
 func (h *ContentHandler) DeletePlan(c *gin.Context) {
 	userID := mustParseUserID(c)
