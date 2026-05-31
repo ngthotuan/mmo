@@ -7,8 +7,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"mmo/internal/adapter/repository"
+	"mmo/internal/domain/ai"
 	"mmo/internal/domain/content"
-	"mmo/internal/integration/gemini"
 	"mmo/internal/infrastructure/queue"
 	"mmo/pkg/logger"
 	"go.uber.org/zap"
@@ -17,7 +17,7 @@ import (
 type ScriptGenHandler struct {
 	trendRepo          *repository.TrendRepo
 	planRepo           *repository.ContentPlanRepo
-	gemini             *gemini.Client
+	gen                ai.ScriptGenerator
 	queueClient        *asynq.Client
 	targetDurationSecs int
 	language           string
@@ -26,7 +26,7 @@ type ScriptGenHandler struct {
 func NewScriptGenHandler(
 	trendRepo *repository.TrendRepo,
 	planRepo *repository.ContentPlanRepo,
-	geminiClient *gemini.Client,
+	gen ai.ScriptGenerator,
 	queueClient *asynq.Client,
 	targetDurationSecs int,
 	language string,
@@ -34,7 +34,7 @@ func NewScriptGenHandler(
 	return &ScriptGenHandler{
 		trendRepo:          trendRepo,
 		planRepo:           planRepo,
-		gemini:             geminiClient,
+		gen:                gen,
 		queueClient:        queueClient,
 		targetDurationSecs: targetDurationSecs,
 		language:           language,
@@ -75,9 +75,15 @@ func (h *ScriptGenHandler) ProcessTask(ctx context.Context, task *asynq.Task) er
 	}
 	platform := p.Platforms[0]
 
-	result, err := h.gemini.GenerateScript(ctx, topic.Title, p.Niche, platform, h.targetDurationSecs, h.language)
+	result, err := h.gen.GenerateScript(ctx, ai.ScriptRequest{
+		Topic:        topic.Title,
+		Niche:        p.Niche,
+		Platform:     platform,
+		DurationSecs: h.targetDurationSecs,
+		Language:     h.language,
+	})
 	if err != nil {
-		logger.Error("gemini script generation failed", zap.Error(err))
+		logger.Error("script generation failed", zap.Error(err))
 		return err
 	}
 

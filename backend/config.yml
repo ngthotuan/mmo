@@ -50,11 +50,18 @@ ffmpeg:
   preset: "fast"
   temp_dir: ""
 
+# AI script-generation provider selection.
+#   provider:         gemini | mock   (mock = deterministic, no network — for hermetic E2E)
+#   fallback_to_mock: when the primary provider errors (quota/outage), fall back to mock (logged)
+ai:
+  provider: "${AI_PROVIDER:-gemini}"
+  fallback_to_mock: "${AI_FALLBACK_TO_MOCK:-true}"
+
 gemini:
   api_key: "${GEMINI_API_KEY}"
-  model: "gemini-2.0-flash"
+  model: "${GEMINI_MODEL:-gemini-2.5-flash}"
   api_base: "https://generativelanguage.googleapis.com/v1beta/models"
-  http_timeout: "30s"
+  http_timeout: "60s"
 
 tiktok:
   client_key: "${TIKTOK_CLIENT_KEY}"
@@ -98,6 +105,21 @@ youtube:
   api_base: "https://www.googleapis.com/youtube/v3"
   http_timeout: "15s"
 
+# YouTube Shorts PUBLISHING via Google OAuth2 (separate from the trending API key above).
+# Leave client_id/secret empty for dry-run; set them to publish for real.
+youtube_publish:
+  client_id: "${YOUTUBE_OAUTH_CLIENT_ID:-}"
+  client_secret: "${YOUTUBE_OAUTH_CLIENT_SECRET:-}"
+  redirect_url: "${FRONTEND_URL:-http://localhost:3000}/channels/callback/youtube"
+  default_category_id: "22"
+  privacy_status: "${YOUTUBE_PRIVACY_STATUS:-unlisted}"
+  http_timeout: "120s"
+  api:
+    auth_base_url: "https://accounts.google.com/o/oauth2/v2/auth"
+    token_url: "https://oauth2.googleapis.com/token"
+    data_base_url: "https://www.googleapis.com/youtube/v3"
+    upload_base_url: "https://www.googleapis.com/upload/youtube/v3"
+
 reddit:
   api_base: "https://www.reddit.com"
   http_timeout: "15s"
@@ -124,12 +146,20 @@ schedule:
   sync_analytics: "0 2 * * *"
   refresh_tokens: "0 */12 * * *"
   auto_pilot_tick: "*/15 * * * *"
+  retry_publish: "*/5 * * * *"
 
 channel:
   facebook_token_expiry: "1320h"
 
 publish:
   min_schedule_before_now: "30s"
+  # dry_run: when "true", ALL publishes are mocked (no real social API calls).
+  # Use for hermetic end-to-end tests. Per-channel dry_run flag also works.
+  dry_run: "${PUBLISH_DRY_RUN:-false}"
+  max_retry_attempts: 5
+
+auto_pilot:
+  tick_batch_size: 200
 
 video:
   presigned_url_ttl: "1h"

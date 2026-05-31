@@ -78,11 +78,27 @@ jobs:
     runs-on: ubuntu-latest
     environment: production   # requires approval — set up under repo Settings
     steps:
+      - uses: actions/checkout@v4
+
       - name: Compute deploy version
         id: ver
         run: |
           TAG="${{ github.ref_name }}"   # e.g. v1.2.3
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"  # → 1.2.3
+
+      # Ship the compose file + nginx config to the server. The deploy dir is NOT
+      # a git checkout, so we copy these from the runner (which IS checked out at
+      # the released tag) instead of running git on the server.
+      - name: Copy compose + nginx config to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          source: "docker-compose.yml,infra/nginx/nginx.conf"
+          target: ${{ secrets.DEPLOY_PATH }}
+          overwrite: true
 
       - name: SSH deploy + migrate + health check + rollback
         uses: appleboy/ssh-action@v1.2.0
@@ -111,23 +127,21 @@ jobs:
             echo "IMAGE_OWNER=$IMAGE_OWNER" >> .env
 
             # ── 3. Pull new images ────────────────────────────────────────
+            # (docker-compose.yml + infra/nginx/nginx.conf were just copied here
+            #  by the scp step, so no git is needed on the server.)
             docker compose pull
 
-            # ── 4. Pull latest compose file (server has git clone) ────────
-            git fetch --tags
-            git checkout "v$NEW_VERSION"
-
-            # ── 5. Run goose migration BEFORE swapping containers ─────────
+            # ── 4. Run goose migration BEFORE swapping containers ─────────
             # Uses the NEW image so any new migration files are included.
-            docker compose run --rm --no-deps \
-              -e DATABASE_URL="$(grep '^DATABASE_URL=' .env | cut -d'=' -f2-)" \
-              backend-api \
-              /app/bin/goose -dir /app/migrations postgres "$DATABASE_URL" up
+            # DATABASE_URL comes from the container's env_file (.env); it must be
+            # expanded INSIDE the container, hence the single-quoted sh -c.
+            docker compose run --rm --no-deps backend-api \
+              sh -c '/app/bin/goose -dir /app/migrations postgres "$DATABASE_URL" up'
 
-            # ── 6. Swap containers ────────────────────────────────────────
+            # ── 5. Swap containers ────────────────────────────────────────
             docker compose up -d
 
-            # ── 7. Health check (30s window) ──────────────────────────────
+            # ── 6. Health check (30s window) ──────────────────────────────
             for i in $(seq 1 15); do
               if curl -fsS http://localhost:8080/health > /dev/null; then
                 echo "Health check passed ($i)"
@@ -138,7 +152,7 @@ jobs:
               sleep 2
             done
 
-            # ── 8. Rollback on health failure ─────────────────────────────
+            # ── 7. Rollback on health failure ─────────────────────────────
             echo "Health check FAILED — rolling back to $PREV_VERSION"
             grep -v '^APP_VERSION=' .env > .env.tmp
             mv .env.tmp .env

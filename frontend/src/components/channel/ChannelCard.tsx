@@ -18,11 +18,13 @@ interface Props {
 const platformLabel: Record<string, string> = {
   tiktok:   "TikTok",
   facebook: "Facebook",
+  youtube:  "YouTube",
 };
 
 const platformColor: Record<string, string> = {
   tiktok:   "bg-black text-white",
   facebook: "bg-blue-600 text-white",
+  youtube:  "bg-red-600 text-white",
 };
 
 export function ChannelCard({ channel: ch }: Props) {
@@ -67,6 +69,11 @@ export function ChannelCard({ channel: ch }: Props) {
             {!ch.is_active && (
               <Badge variant="outline" className="text-xs text-muted-foreground">
                 Inactive
+              </Badge>
+            )}
+            {ch.dry_run && (
+              <Badge variant="outline" className="text-xs text-amber-600 border-amber-400">
+                Dry-run
               </Badge>
             )}
           </div>

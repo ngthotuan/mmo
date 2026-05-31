@@ -52,6 +52,11 @@ services:
     build:
       context: ./frontend
       dockerfile: ../infra/docker/frontend.Dockerfile
+      args:
+        # NEXT_PUBLIC_* is inlined at build time. The all-in-one stack serves the
+        # app through nginx (:80), so the browser calls the API same-origin.
+        # Override NEXT_PUBLIC_API_URL in .env for a real domain.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost}
     restart: unless-stopped
     env_file: .env
     ports:

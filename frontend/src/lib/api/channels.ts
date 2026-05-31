@@ -7,7 +7,7 @@ export const channelsApi = {
     return data.data;
   },
 
-  getAuthURL: async (platform: "tiktok" | "facebook"): Promise<string> => {
+  getAuthURL: async (platform: "tiktok" | "facebook" | "youtube"): Promise<string> => {
     const { data } = await apiClient.get<{ auth_url: string }>(
       `/api/v1/channels/connect/${platform}`
     );
@@ -16,6 +16,11 @@ export const channelsApi = {
 
   connectTikTok: async (code: string, state: string): Promise<Channel> => {
     const { data } = await apiClient.post<Channel>("/api/v1/channels/oauth/tiktok", { code, state });
+    return data;
+  },
+
+  connectYouTube: async (code: string, state: string): Promise<Channel> => {
+    const { data } = await apiClient.post<Channel>("/api/v1/channels/oauth/youtube", { code, state });
     return data;
   },
 

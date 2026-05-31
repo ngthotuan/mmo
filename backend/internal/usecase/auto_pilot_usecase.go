@@ -10,9 +10,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"mmo/internal/adapter/repository"
+	"mmo/internal/domain/ai"
 	"mmo/internal/domain/autopilot"
+	"mmo/internal/domain/channel"
 	"mmo/internal/domain/content"
-	"mmo/internal/integration/gemini"
 	"mmo/internal/infrastructure/queue"
 	apperr "mmo/pkg/errors"
 	"mmo/pkg/logger"
@@ -23,30 +24,110 @@ type AutoPilotUsecase struct {
 	profileRepo        *repository.AutoPilotRepo
 	trendRepo          *repository.TrendRepo
 	planRepo           *repository.ContentPlanRepo
-	gemini             *gemini.Client
+	channelRepo        *repository.ChannelRepoWithAll
+	gen                ai.ScriptGenerator
 	queueClient        *asynq.Client
 	targetDurationSecs int
 	language           string
+	tickBatchSize      int
 }
 
 func NewAutoPilotUsecase(
 	profileRepo *repository.AutoPilotRepo,
 	trendRepo *repository.TrendRepo,
 	planRepo *repository.ContentPlanRepo,
-	gemini *gemini.Client,
+	channelRepo *repository.ChannelRepoWithAll,
+	gen ai.ScriptGenerator,
 	queueClient *asynq.Client,
 	targetDurationSecs int,
 	language string,
+	tickBatchSize int,
 ) *AutoPilotUsecase {
+	if tickBatchSize <= 0 {
+		tickBatchSize = 200
+	}
 	return &AutoPilotUsecase{
 		profileRepo:        profileRepo,
 		trendRepo:          trendRepo,
 		planRepo:           planRepo,
-		gemini:             gemini,
+		channelRepo:        channelRepo,
+		gen:                gen,
 		queueClient:        queueClient,
 		targetDurationSecs: targetDurationSecs,
 		language:           language,
+		tickBatchSize:      tickBatchSize,
 	}
+}
+
+// QuickSetupInput holds optional overrides for the one-click MMO channel setup.
+// Empty fields fall back to sensible Vietnamese-MMO defaults.
+type QuickSetupInput struct {
+	Name          string
+	Niche         string
+	Voice         string
+	Platforms     []string
+	ScheduleTimes []string
+	DailyCount    int
+}
+
+// QuickSetup provisions a ready-to-run "MMO channel": dry-run social channels
+// for the requested platforms plus an enabled auto-pilot profile wired to
+// discover → produce → (dry-run) publish automatically.
+func (uc *AutoPilotUsecase) QuickSetup(ctx context.Context, userID uuid.UUID, in QuickSetupInput) (*autopilot.Profile, error) {
+	platforms := in.Platforms
+	if len(platforms) == 0 {
+		platforms = []string{"tiktok", "facebook", "youtube"}
+	}
+
+	// Provision a dry-run, active channel per platform (idempotent per user).
+	for _, pl := range platforms {
+		plat := channel.Platform(strings.ToLower(pl))
+		puid := fmt.Sprintf("dryrun_%s_%s", plat, userID.String())
+		if _, err := uc.channelRepo.GetByPlatformUserID(ctx, plat, puid); err == nil {
+			continue // already provisioned
+		}
+		ch := &channel.Channel{
+			ID:             uuid.New(),
+			UserID:         userID,
+			Platform:       plat,
+			PlatformUserID: puid,
+			Username:       "mmo_" + string(plat),
+			DisplayName:    "MMO " + string(plat) + " (dry-run)",
+			IsActive:       true,
+			DryRun:         true,
+		}
+		if err := uc.channelRepo.Create(ctx, ch); err != nil {
+			return nil, fmt.Errorf("create dry-run channel (%s): %w", plat, err)
+		}
+	}
+
+	profile := &autopilot.Profile{
+		UserID:          userID,
+		Name:            defaultStrUC(in.Name, "Kênh MMO"),
+		Niche:           defaultStrUC(in.Niche, "kiếm tiền online"),
+		Voice:           defaultStrUC(in.Voice, "vi-VN-HoaiMyNeural"),
+		TargetPlatforms: platforms,
+		TrendSources:    []string{"google_trends", "vnexpress", "reddit"},
+		DailyCount:      in.DailyCount,
+		ScheduleTimes:   in.ScheduleTimes,
+		AutoApprove:     true,
+		AutoPublish:     true,
+		Enabled:         true,
+	}
+	if profile.DailyCount <= 0 {
+		profile.DailyCount = 3
+	}
+	if len(profile.ScheduleTimes) == 0 {
+		profile.ScheduleTimes = []string{"09:00", "19:00"}
+	}
+	return uc.Create(ctx, profile)
+}
+
+func defaultStrUC(v, def string) string {
+	if strings.TrimSpace(v) == "" {
+		return def
+	}
+	return v
 }
 
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
@@ -125,7 +206,7 @@ func (uc *AutoPilotUsecase) Toggle(ctx context.Context, userID, id uuid.UUID, en
 // TickAll is called by the cron worker every N minutes. It picks enabled profiles
 // whose scheduled time falls within the window since their last run, then runs them.
 func (uc *AutoPilotUsecase) TickAll(ctx context.Context, now time.Time) (int, error) {
-	profiles, err := uc.profileRepo.ListEnabled(ctx)
+	profiles, err := uc.profileRepo.ListDueEnabled(ctx, uc.tickBatchSize)
 	if err != nil {
 		return 0, err
 	}
@@ -183,9 +264,15 @@ func (uc *AutoPilotUsecase) generatePlanForTrend(ctx context.Context, p *autopil
 	if len(p.TargetPlatforms) > 0 {
 		platform = p.TargetPlatforms[0]
 	}
-	result, err := uc.gemini.GenerateScript(ctx, t.Title, p.Niche, platform, uc.targetDurationSecs, uc.language)
+	result, err := uc.gen.GenerateScript(ctx, ai.ScriptRequest{
+		Topic:        t.Title,
+		Niche:        p.Niche,
+		Platform:     platform,
+		DurationSecs: uc.targetDurationSecs,
+		Language:     uc.language,
+	})
 	if err != nil {
-		return fmt.Errorf("gemini: %w", err)
+		return fmt.Errorf("generate script: %w", err)
 	}
 
 	meta, _ := json.Marshal(map[string]any{

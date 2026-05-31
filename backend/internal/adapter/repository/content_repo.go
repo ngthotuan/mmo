@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,6 +63,32 @@ func (r *TrendRepo) Create(ctx context.Context, t *content.TrendTopic) error {
 		t.ID, t.UserID, t.Source, t.Title, t.Description,
 		pq.Array(t.Keywords), t.TrendingScore, t.SourceURL, t.RawData, t.Status,
 	)
+	return err
+}
+
+// CreateBatch inserts many trend topics in a single statement. Duplicates (same
+// source + title on the same day, per uq_trend_topics_source_title_day) are
+// silently skipped via ON CONFLICT DO NOTHING, so callers don't need per-row
+// existence checks.
+func (r *TrendRepo) CreateBatch(ctx context.Context, ts []*content.TrendTopic) error {
+	if len(ts) == 0 {
+		return nil
+	}
+	const cols = 10
+	values := make([]string, 0, len(ts))
+	args := make([]any, 0, len(ts)*cols)
+	for i, t := range ts {
+		b := i * cols
+		values = append(values, fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			b+1, b+2, b+3, b+4, b+5, b+6, b+7, b+8, b+9, b+10))
+		args = append(args,
+			t.ID, t.UserID, t.Source, t.Title, t.Description,
+			pq.Array(t.Keywords), t.TrendingScore, t.SourceURL, t.RawData, t.Status)
+	}
+	q := `INSERT INTO trend_topics
+			(id, user_id, source, title, description, keywords, trending_score, source_url, raw_data, status)
+		  VALUES ` + strings.Join(values, ",") + ` ON CONFLICT DO NOTHING`
+	_, err := r.db.ExecContext(ctx, q, args...)
 	return err
 }
 

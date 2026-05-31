@@ -30,6 +30,7 @@ type Job struct {
 	PlatformPostURL string     `db:"platform_post_url"`
 	Status          JobStatus  `db:"status"`
 	RetryCount      int        `db:"retry_count"`
+	NextRetryAt     *time.Time `db:"next_retry_at"`
 	ErrorMessage    string     `db:"error_message"`
 	CreatedAt       time.Time  `db:"created_at"`
 	UpdatedAt       time.Time  `db:"updated_at"`

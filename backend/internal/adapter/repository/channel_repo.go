@@ -30,11 +30,11 @@ func (r *ChannelRepoWithAll) Create(ctx context.Context, ch *channel.Channel) er
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO channels
 			(id, user_id, platform, platform_user_id, username, display_name, avatar_url,
-			 access_token, refresh_token, token_expires_at, page_id, is_active, metadata)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+			 access_token, refresh_token, token_expires_at, page_id, is_active, dry_run, metadata)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		ch.ID, ch.UserID, ch.Platform, ch.PlatformUserID, ch.Username, ch.DisplayName,
 		ch.AvatarURL, ch.AccessToken, ch.RefreshToken, ch.TokenExpiresAt, ch.PageID,
-		ch.IsActive, meta,
+		ch.IsActive, ch.DryRun, meta,
 	)
 	if err != nil {
 		var pgErr *pq.Error

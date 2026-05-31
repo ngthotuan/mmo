@@ -136,11 +136,42 @@ Enable "Public access" on the R2 bucket for video playback URLs to work.
 # Google Gemini — script generation (1,500 free requests/day)
 GEMINI_API_KEY=your-gemini-key        # https://aistudio.google.com/apikey
 
+# AI provider abstraction (script generation is behind the ai.ScriptGenerator port)
+AI_PROVIDER=gemini                    # gemini | mock  (mock = deterministic, no network)
+AI_FALLBACK_TO_MOCK=true              # on Gemini error/quota, fall back to mock (logged)
+GEMINI_MODEL=gemini-2.5-flash         # config-driven model name
+
 # Stock media (free tiers)
 PEXELS_API_KEY=your-pexels-key        # https://www.pexels.com/api/
 PIXABAY_API_KEY=your-pixabay-key      # https://pixabay.com/api/docs/
-YOUTUBE_API_KEY=your-youtube-key      # https://console.cloud.google.com
+YOUTUBE_API_KEY=your-youtube-key      # https://console.cloud.google.com  (trending discovery only)
 ```
+
+### Dry-run publishing (test the whole pipeline without posting)
+
+```env
+PUBLISH_DRY_RUN=true   # ALL publishes are mocked — produces real videos, no social posting
+```
+
+When `true`, the pipeline runs end-to-end (discover → script → media → TTS → FFmpeg →
+R2 upload → publish) but the publish step returns a synthetic `dryrun_<platform>_<uuid>`
+post id instead of calling TikTok/Facebook/YouTube. A **per-channel** `dry_run` flag does
+the same for individual channels (used by the one-click "MMO channel" quick-setup). For a
+fully hermetic local run, combine with `AI_PROVIDER=mock`.
+
+### YouTube Shorts OAuth (publishing)
+
+Separate from `YOUTUBE_API_KEY` (which is only for trending discovery). Create an OAuth 2.0
+Client (type: Web) in Google Cloud Console with the `youtube.upload` scope:
+
+```env
+YOUTUBE_OAUTH_CLIENT_ID=your-google-oauth-client-id
+YOUTUBE_OAUTH_CLIENT_SECRET=your-google-oauth-client-secret
+YOUTUBE_PRIVACY_STATUS=unlisted       # public | unlisted | private
+```
+
+Redirect URL (in `config.yml`): `${FRONTEND_URL}/channels/callback/youtube`.
+Uploaded videos get `#Shorts` appended so YouTube classifies the vertical clip as a Short.
 
 ### TikTok OAuth
 

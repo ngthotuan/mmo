@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"mmo/internal/adapter/repository"
+	"mmo/internal/domain/ai"
 	"mmo/internal/domain/content"
-	"mmo/internal/integration/gemini"
 	"mmo/internal/infrastructure/queue"
 	apperr "mmo/pkg/errors"
 	"github.com/hibiken/asynq"
@@ -17,7 +17,7 @@ import (
 type ContentUsecase struct {
 	trendRepo          *repository.TrendRepo
 	planRepo           *repository.ContentPlanRepo
-	gemini             *gemini.Client
+	gen                ai.ScriptGenerator
 	queueClient        *asynq.Client
 	targetDurationSecs int
 	language           string
@@ -26,7 +26,7 @@ type ContentUsecase struct {
 func NewContentUsecase(
 	trendRepo *repository.TrendRepo,
 	planRepo *repository.ContentPlanRepo,
-	geminiClient *gemini.Client,
+	gen ai.ScriptGenerator,
 	queueClient *asynq.Client,
 	targetDurationSecs int,
 	language string,
@@ -34,7 +34,7 @@ func NewContentUsecase(
 	return &ContentUsecase{
 		trendRepo:          trendRepo,
 		planRepo:           planRepo,
-		gemini:             geminiClient,
+		gen:                gen,
 		queueClient:        queueClient,
 		targetDurationSecs: targetDurationSecs,
 		language:           language,
@@ -141,8 +141,13 @@ func (uc *ContentUsecase) RegenerateScript(ctx context.Context, userID, planID u
 		return nil, err
 	}
 
-	result, err := uc.gemini.GenerateScript(ctx, plan.Title, plan.Niche,
-		firstPlatform(plan.TargetPlatforms), uc.targetDurationSecs, uc.language)
+	result, err := uc.gen.GenerateScript(ctx, ai.ScriptRequest{
+		Topic:        plan.Title,
+		Niche:        plan.Niche,
+		Platform:     firstPlatform(plan.TargetPlatforms),
+		DurationSecs: uc.targetDurationSecs,
+		Language:     uc.language,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +225,13 @@ func (uc *ContentUsecase) GenerateScriptForTrend(ctx context.Context, userID, to
 		return nil, err
 	}
 
-	result, err := uc.gemini.GenerateScript(ctx, topic.Title, niche, firstPlatform(platforms), uc.targetDurationSecs, uc.language)
+	result, err := uc.gen.GenerateScript(ctx, ai.ScriptRequest{
+		Topic:        topic.Title,
+		Niche:        niche,
+		Platform:     firstPlatform(platforms),
+		DurationSecs: uc.targetDurationSecs,
+		Language:     uc.language,
+	})
 	if err != nil {
 		return nil, err
 	}

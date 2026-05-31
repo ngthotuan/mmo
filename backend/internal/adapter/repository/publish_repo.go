@@ -34,6 +34,7 @@ type publishJobRow struct {
 	PlatformPostURL string            `db:"platform_post_url"`
 	Status          publish.JobStatus `db:"status"`
 	RetryCount      int               `db:"retry_count"`
+	NextRetryAt     *time.Time        `db:"next_retry_at"`
 	ErrorMessage    string            `db:"error_message"`
 	CreatedAt       time.Time         `db:"created_at"`
 	UpdatedAt       time.Time         `db:"updated_at"`
@@ -54,6 +55,7 @@ func (row publishJobRow) toEntity() *publish.Job {
 		PlatformPostURL: row.PlatformPostURL,
 		Status:          row.Status,
 		RetryCount:      row.RetryCount,
+		NextRetryAt:     row.NextRetryAt,
 		ErrorMessage:    row.ErrorMessage,
 		CreatedAt:       row.CreatedAt,
 		UpdatedAt:       row.UpdatedAt,
@@ -141,6 +143,81 @@ func (r *PublishJobRepo) UpdateStatus(ctx context.Context, id uuid.UUID, status 
 		`UPDATE publish_jobs SET status=$1, error_message=$2, updated_at=NOW() WHERE id=$3`,
 		status, errMsg, id)
 	return err
+}
+
+// Claim atomically flips a job from scheduled→publishing. Returns true only if
+// this caller won the claim, so duplicate task deliveries (asynq is at-least-once)
+// don't double-publish.
+func (r *PublishJobRepo) Claim(ctx context.Context, id uuid.UUID) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE publish_jobs SET status='publishing', error_message='', updated_at=NOW()
+		 WHERE id=$1 AND status='scheduled'`, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// MarkFailed persists the failure, the incremented retry count, and the next
+// retry time (nil if no more retries). Fixes the old bug where RetryCount was
+// mutated in memory and dropped.
+func (r *PublishJobRepo) MarkFailed(ctx context.Context, id uuid.UUID, errMsg string, retryCount int, nextRetryAt *time.Time) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE publish_jobs SET status='failed', error_message=$1, retry_count=$2,
+		 next_retry_at=$3, updated_at=NOW() WHERE id=$4`,
+		errMsg, retryCount, nextRetryAt, id)
+	return err
+}
+
+// Requeue resets a failed job back to scheduled so the normal publish path can
+// claim and re-run it.
+func (r *PublishJobRepo) Requeue(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE publish_jobs SET status='scheduled', next_retry_at=NULL, updated_at=NOW() WHERE id=$1`,
+		id)
+	return err
+}
+
+// ListRetryable returns failed jobs eligible for an automatic retry.
+func (r *PublishJobRepo) ListRetryable(ctx context.Context, before time.Time, maxAttempts int) ([]*publish.Job, error) {
+	var rows []publishJobRow
+	if err := r.db.SelectContext(ctx, &rows, `
+		SELECT * FROM publish_jobs
+		WHERE status = 'failed' AND retry_count < $1
+		  AND next_retry_at IS NOT NULL AND next_retry_at <= $2
+		ORDER BY next_retry_at ASC
+		LIMIT 50`,
+		maxAttempts, before,
+	); err != nil {
+		return nil, err
+	}
+	jobs := make([]*publish.Job, len(rows))
+	for i, row := range rows {
+		jobs[i] = row.toEntity()
+	}
+	return jobs, nil
+}
+
+// ExistsForVideoJobChannel reports whether a publish job already exists for a
+// (video_job, channel) pair — used to make auto-publish idempotent on retries.
+func (r *PublishJobRepo) ExistsForVideoJobChannel(ctx context.Context, videoJobID, channelID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM publish_jobs WHERE video_job_id=$1 AND channel_id=$2)`,
+		videoJobID, channelID).Scan(&exists)
+	return exists, err
+}
+
+// CountUnfinishedForPlan counts publish jobs for a content plan that are not yet
+// in a terminal-success/cancelled state. Zero means every channel has published.
+func (r *PublishJobRepo) CountUnfinishedForPlan(ctx context.Context, planID uuid.UUID) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM publish_jobs
+		 WHERE content_plan_id=$1 AND status NOT IN ('published','cancelled')`,
+		planID).Scan(&n)
+	return n, err
 }
 
 func (r *PublishJobRepo) ListDue(ctx context.Context, before time.Time) ([]*publish.Job, error) {

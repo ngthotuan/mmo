@@ -21,19 +21,22 @@ type Config struct {
 	R2           R2Config
 	Queue        QueueConfig
 	FFmpeg       FFmpegConfig
+	AI           AIConfig
 	Gemini       GeminiConfig
 	TikTok       TikTokConfig
 	Facebook     FacebookConfig
 	Pexels       PexelsConfig
 	Pixabay      PixabayConfig
-	YouTube      YouTubeConfig
-	Reddit       RedditConfig
+	YouTube        YouTubeConfig
+	YouTubePublish YouTubePublishConfig
+	Reddit         RedditConfig
 	GoogleTrends GoogleTrendsConfig
 	EdgeTTS      EdgeTTSConfig
 	Content      ContentConfig
 	Schedule     ScheduleConfig
 	Channel      ChannelConfig
 	Publish      PublishConfig
+	AutoPilot    AutoPilotConfig
 	Video        VideoConfig
 	MediaCollect MediaCollectConfig
 }
@@ -108,6 +111,12 @@ type GeminiConfig struct {
 	HTTPTimeout time.Duration
 }
 
+// AIConfig selects the script-generation provider and fallback behaviour.
+type AIConfig struct {
+	Provider       string // "gemini" | "mock"
+	FallbackToMock bool   // when primary fails, fall back to the deterministic mock
+}
+
 type TikTokAPIConfig struct {
 	AuthBaseURL      string
 	TokenURL         string
@@ -161,6 +170,25 @@ type YouTubeConfig struct {
 	HTTPTimeout time.Duration
 }
 
+// YouTubePublishConfig holds Google OAuth + upload settings for publishing Shorts.
+// Separate from YouTubeConfig (which is an API key for trending discovery only).
+type YouTubePublishConfig struct {
+	ClientID          string
+	ClientSecret      string
+	RedirectURL       string
+	DefaultCategoryID string
+	PrivacyStatus     string
+	HTTPTimeout       time.Duration
+	API               YouTubePublishAPIConfig
+}
+
+type YouTubePublishAPIConfig struct {
+	AuthBaseURL   string
+	TokenURL      string
+	DataBaseURL   string
+	UploadBaseURL string
+}
+
 type RedditConfig struct {
 	APIBase     string
 	HTTPTimeout time.Duration
@@ -194,6 +222,7 @@ type ScheduleConfig struct {
 	SyncAnalytics  string
 	RefreshTokens  string
 	AutoPilotTick  string
+	RetryPublish   string
 }
 
 type ChannelConfig struct {
@@ -202,6 +231,12 @@ type ChannelConfig struct {
 
 type PublishConfig struct {
 	MinScheduleBeforeNow time.Duration
+	DryRun               bool // global override: mock ALL publishes (no real API calls)
+	MaxRetryAttempts     int
+}
+
+type AutoPilotConfig struct {
+	TickBatchSize int // max profiles evaluated per tick
 }
 
 type VideoConfig struct {
@@ -226,19 +261,22 @@ type rawConfig struct {
 	R2           rawR2           `yaml:"r2"`
 	Queue        rawQueue        `yaml:"queue"`
 	FFmpeg       rawFFmpeg       `yaml:"ffmpeg"`
+	AI           rawAI           `yaml:"ai"`
 	Gemini       rawGemini       `yaml:"gemini"`
 	TikTok       rawTikTok       `yaml:"tiktok"`
 	Facebook     rawFacebook     `yaml:"facebook"`
 	Pexels       rawPexels       `yaml:"pexels"`
 	Pixabay      rawPixabay      `yaml:"pixabay"`
-	YouTube      rawYouTube      `yaml:"youtube"`
-	Reddit       rawReddit       `yaml:"reddit"`
+	YouTube        rawYouTube        `yaml:"youtube"`
+	YouTubePublish rawYouTubePublish `yaml:"youtube_publish"`
+	Reddit         rawReddit         `yaml:"reddit"`
 	GoogleTrends rawGoogleTrends `yaml:"google_trends"`
 	EdgeTTS      rawEdgeTTS      `yaml:"edgetts"`
 	Content      rawContent      `yaml:"content"`
 	Schedule     rawSchedule     `yaml:"schedule"`
 	Channel      rawChannel      `yaml:"channel"`
 	Publish      rawPublish      `yaml:"publish"`
+	AutoPilot    rawAutoPilot    `yaml:"auto_pilot"`
 	Video        rawVideo        `yaml:"video"`
 	MediaCollect rawMediaCollect `yaml:"media_collect"`
 }
@@ -313,6 +351,11 @@ type rawGemini struct {
 	HTTPTimeout string `yaml:"http_timeout"`
 }
 
+type rawAI struct {
+	Provider       string `yaml:"provider"`
+	FallbackToMock string `yaml:"fallback_to_mock"`
+}
+
 type rawTikTokAPI struct {
 	AuthBaseURL      string `yaml:"auth_base_url"`
 	TokenURL         string `yaml:"token_url"`
@@ -366,6 +409,21 @@ type rawYouTube struct {
 	HTTPTimeout string `yaml:"http_timeout"`
 }
 
+type rawYouTubePublish struct {
+	ClientID          string `yaml:"client_id"`
+	ClientSecret      string `yaml:"client_secret"`
+	RedirectURL       string `yaml:"redirect_url"`
+	DefaultCategoryID string `yaml:"default_category_id"`
+	PrivacyStatus     string `yaml:"privacy_status"`
+	HTTPTimeout       string `yaml:"http_timeout"`
+	API               struct {
+		AuthBaseURL   string `yaml:"auth_base_url"`
+		TokenURL      string `yaml:"token_url"`
+		DataBaseURL   string `yaml:"data_base_url"`
+		UploadBaseURL string `yaml:"upload_base_url"`
+	} `yaml:"api"`
+}
+
 type rawReddit struct {
 	APIBase     string `yaml:"api_base"`
 	HTTPTimeout string `yaml:"http_timeout"`
@@ -399,6 +457,7 @@ type rawSchedule struct {
 	SyncAnalytics  string `yaml:"sync_analytics"`
 	RefreshTokens  string `yaml:"refresh_tokens"`
 	AutoPilotTick  string `yaml:"auto_pilot_tick"`
+	RetryPublish   string `yaml:"retry_publish"`
 }
 
 type rawChannel struct {
@@ -407,6 +466,12 @@ type rawChannel struct {
 
 type rawPublish struct {
 	MinScheduleBeforeNow string `yaml:"min_schedule_before_now"`
+	DryRun               string `yaml:"dry_run"`
+	MaxRetryAttempts     int    `yaml:"max_retry_attempts"`
+}
+
+type rawAutoPilot struct {
+	TickBatchSize int `yaml:"tick_batch_size"`
 }
 
 type rawVideo struct {
@@ -495,6 +560,10 @@ func Load() *Config {
 			Preset:       raw.FFmpeg.Preset,
 			TempDir:      raw.FFmpeg.TempDir,
 		},
+		AI: AIConfig{
+			Provider:       defaultStr(raw.AI.Provider, "gemini"),
+			FallbackToMock: raw.AI.FallbackToMock != "false",
+		},
 		Gemini: GeminiConfig{
 			APIKey:      raw.Gemini.APIKey,
 			Model:       raw.Gemini.Model,
@@ -545,6 +614,20 @@ func Load() *Config {
 			APIBase:     raw.YouTube.APIBase,
 			HTTPTimeout: mustDuration(raw.YouTube.HTTPTimeout, "youtube.http_timeout"),
 		},
+		YouTubePublish: YouTubePublishConfig{
+			ClientID:          raw.YouTubePublish.ClientID,
+			ClientSecret:      raw.YouTubePublish.ClientSecret,
+			RedirectURL:       raw.YouTubePublish.RedirectURL,
+			DefaultCategoryID: raw.YouTubePublish.DefaultCategoryID,
+			PrivacyStatus:     raw.YouTubePublish.PrivacyStatus,
+			HTTPTimeout:       mustDuration(raw.YouTubePublish.HTTPTimeout, "youtube_publish.http_timeout"),
+			API: YouTubePublishAPIConfig{
+				AuthBaseURL:   raw.YouTubePublish.API.AuthBaseURL,
+				TokenURL:      raw.YouTubePublish.API.TokenURL,
+				DataBaseURL:   raw.YouTubePublish.API.DataBaseURL,
+				UploadBaseURL: raw.YouTubePublish.API.UploadBaseURL,
+			},
+		},
 		Reddit: RedditConfig{
 			APIBase:     raw.Reddit.APIBase,
 			HTTPTimeout: mustDuration(raw.Reddit.HTTPTimeout, "reddit.http_timeout"),
@@ -572,12 +655,18 @@ func Load() *Config {
 			SyncAnalytics:  raw.Schedule.SyncAnalytics,
 			RefreshTokens:  raw.Schedule.RefreshTokens,
 			AutoPilotTick:  raw.Schedule.AutoPilotTick,
+			RetryPublish:   defaultStr(raw.Schedule.RetryPublish, "*/5 * * * *"),
 		},
 		Channel: ChannelConfig{
 			FacebookTokenExpiry: mustDuration(raw.Channel.FacebookTokenExpiry, "channel.facebook_token_expiry"),
 		},
 		Publish: PublishConfig{
 			MinScheduleBeforeNow: mustDuration(raw.Publish.MinScheduleBeforeNow, "publish.min_schedule_before_now"),
+			DryRun:               raw.Publish.DryRun == "true",
+			MaxRetryAttempts:     raw.Publish.MaxRetryAttempts,
+		},
+		AutoPilot: AutoPilotConfig{
+			TickBatchSize: raw.AutoPilot.TickBatchSize,
 		},
 		Video: VideoConfig{
 			PresignedURLTTL:    mustDuration(raw.Video.PresignedURLTTL, "video.presigned_url_ttl"),
@@ -607,6 +696,14 @@ func expandEnv(s string) string {
 func mustField(val, field string) string {
 	if val == "" {
 		log.Fatalf("required config field %q is empty (set in config.yml or via environment variable)", field)
+	}
+	return val
+}
+
+// defaultStr returns val, or def when val is empty.
+func defaultStr(val, def string) string {
+	if val == "" {
+		return def
 	}
 	return val
 }

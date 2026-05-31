@@ -99,7 +99,7 @@ Content-Type: application/json
 
 ### GET /api/v1/channels/connect/:platform ★
 
-`:platform` = `tiktok` | `facebook`
+`:platform` = `tiktok` | `facebook` | `youtube`
 
 ```json
 // Response 200
@@ -124,6 +124,16 @@ Content-Type: application/json
 
 // Response 201
 { "data": { ...channel } }
+```
+
+### POST /api/v1/channels/oauth/youtube ★
+
+```json
+// Request
+{ "code": "oauth-code-from-callback", "state": "..." }
+
+// Response 200
+{ "data": { ...channel } }   // channel.platform = "youtube"
 ```
 
 ### GET /api/v1/channels/facebook/pages ★
@@ -590,6 +600,36 @@ No auth required.
 ```
 
 ---
+
+## Auto-Pilot (virtual channels) ★
+
+All routes require JWT.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET    | `/api/v1/auto-pilot`              | List profiles |
+| POST   | `/api/v1/auto-pilot`              | Create profile |
+| POST   | `/api/v1/auto-pilot/quick-setup`  | One-click MMO channel (see below) |
+| GET    | `/api/v1/auto-pilot/:id`          | Get profile |
+| PUT    | `/api/v1/auto-pilot/:id`          | Update profile |
+| PUT    | `/api/v1/auto-pilot/:id/toggle`   | Enable/disable |
+| DELETE | `/api/v1/auto-pilot/:id`          | Delete profile |
+| POST   | `/api/v1/auto-pilot/:id/run`      | Run now (manual tick) |
+
+### POST /api/v1/auto-pilot/quick-setup ★
+
+Provisions dry-run channels (TikTok/Facebook/YouTube) + an enabled Vietnamese-MMO
+auto-pilot profile. All fields optional; defaults shown.
+
+```json
+// Request (all optional)
+{ "name": "Kênh MMO", "niche": "kiếm tiền online", "voice": "vi-VN-HoaiMyNeural",
+  "platforms": ["tiktok","facebook","youtube"], "schedule_times": ["09:00","19:00"],
+  "daily_count": 3 }
+
+// Response 201
+{ "data": { ...autoPilotProfile } }
+```
 
 ## Error Responses
 

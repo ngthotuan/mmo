@@ -20,9 +20,9 @@ interface Props {
 
 export function ConnectChannelModal({ open, onClose }: Props) {
   const router = useRouter();
-  const [loading, setLoading] = useState<"tiktok" | "facebook" | null>(null);
+  const [loading, setLoading] = useState<"tiktok" | "facebook" | "youtube" | null>(null);
 
-  const connect = async (platform: "tiktok" | "facebook") => {
+  const connect = async (platform: "tiktok" | "facebook" | "youtube") => {
     setLoading(platform);
     try {
       const authURL = await channelsApi.getAuthURL(platform);
@@ -61,6 +61,14 @@ export function ConnectChannelModal({ open, onClose }: Props) {
             disabled={loading !== null}
           >
             {loading === "facebook" ? "Redirecting…" : "Connect Facebook Page"}
+          </Button>
+
+          <Button
+            className="bg-red-600 text-white hover:bg-red-700 gap-3"
+            onClick={() => connect("youtube")}
+            disabled={loading !== null}
+          >
+            {loading === "youtube" ? "Redirecting…" : "Connect YouTube"}
           </Button>
         </div>
       </DialogContent>

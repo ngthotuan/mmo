@@ -15,9 +15,13 @@ import (
 	infradb "mmo/internal/infrastructure/db"
 	infraqueue "mmo/internal/infrastructure/queue"
 	"mmo/internal/infrastructure/storage"
+	"mmo/internal/domain/ai"
+	"mmo/internal/integration/aifallback"
 	"mmo/internal/integration/facebook"
 	"mmo/internal/integration/gemini"
+	"mmo/internal/integration/mockai"
 	"mmo/internal/integration/tiktok"
+	"mmo/internal/integration/youtubepublish"
 	"mmo/internal/usecase"
 	"mmo/pkg/config"
 	"mmo/pkg/logger"
@@ -72,16 +76,17 @@ func main() {
 	// ─── Integration clients ─────────────────────────────────────────────────
 	tiktokClient   := tiktok.New(cfg.TikTok)
 	facebookClient := facebook.New(cfg.Facebook)
-	geminiClient   := gemini.New(cfg.Gemini)
+	ytPublishClient := youtubepublish.New(cfg.YouTubePublish)
+	scriptGen      := buildScriptGenerator(cfg)
 
 	// ─── Use cases ───────────────────────────────────────────────────────────
-	channelUC  := usecase.NewChannelUsecase(channelRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey, cfg.Channel.FacebookTokenExpiry, redisClient)
-	contentUC  := usecase.NewContentUsecase(trendRepo, contentPlanRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language)
+	channelUC  := usecase.NewChannelUsecase(channelRepo, tiktokClient, facebookClient, ytPublishClient, cfg.Auth.EncryptionKey, cfg.Channel.FacebookTokenExpiry, redisClient)
+	contentUC  := usecase.NewContentUsecase(trendRepo, contentPlanRepo, scriptGen, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language)
 	videoUC    := usecase.NewVideoUsecase(videoJobRepo, videoTemplRepo, r2, queueClient, cfg.Video.PresignedURLTTL)
 	publishUC   := usecase.NewPublishUsecase(publishRepo, videoJobRepo, channelRepo, queueClient, cfg.Publish.MinScheduleBeforeNow)
 	analyticsUC := usecase.NewAnalyticsUsecase(analyticsRepo)
 	productUC   := usecase.NewProductUsecase(productRepo, channelRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey)
-	autoPilotUC := usecase.NewAutoPilotUsecase(autoPilotRepo, trendRepo, contentPlanRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language)
+	autoPilotUC := usecase.NewAutoPilotUsecase(autoPilotRepo, trendRepo, contentPlanRepo, channelRepo, scriptGen, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language, cfg.AutoPilot.TickBatchSize)
 
 	// ─── Handlers ────────────────────────────────────────────────────────────
 	healthHandler  := handler.NewHealthHandler(db)
@@ -125,6 +130,7 @@ func main() {
 				ch.GET("/facebook/pages",    channelHandler.ListFacebookPages)
 				ch.POST("/oauth/tiktok",     channelHandler.ConnectTikTok)
 				ch.POST("/oauth/facebook",   channelHandler.ConnectFacebook)
+				ch.POST("/oauth/youtube",    channelHandler.ConnectYouTube)
 				ch.DELETE("/:id",            channelHandler.Delete)
 				ch.PUT("/:id/toggle",        channelHandler.Toggle)
 			}
@@ -198,6 +204,7 @@ func main() {
 			{
 				ap.GET("",              autoPilotHandler.List)
 				ap.POST("",             autoPilotHandler.Create)
+				ap.POST("/quick-setup", autoPilotHandler.QuickSetup)
 				ap.GET("/:id",          autoPilotHandler.Get)
 				ap.PUT("/:id",          autoPilotHandler.Update)
 				ap.PUT("/:id/toggle",   autoPilotHandler.Toggle)
@@ -233,5 +240,21 @@ func main() {
 		logger.Error("forced shutdown", zap.Error(err))
 	}
 	logger.Info("server stopped")
+}
+
+// buildScriptGenerator selects the AI provider from config and optionally wraps
+// it with a mock fallback. Mirrors cmd/worker/main.go.
+func buildScriptGenerator(cfg *config.Config) ai.ScriptGenerator {
+	var gen ai.ScriptGenerator
+	switch cfg.AI.Provider {
+	case "mock":
+		return mockai.New()
+	default:
+		gen = gemini.New(cfg.Gemini)
+	}
+	if cfg.AI.FallbackToMock {
+		gen = aifallback.New(gen, mockai.New())
+	}
+	return gen
 }
 

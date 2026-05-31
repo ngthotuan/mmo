@@ -55,17 +55,15 @@ func (h *TrendDiscoveryHandler) ProcessTask(ctx context.Context, task *asynq.Tas
 		geo = "US"
 	}
 
-	total := 0
+	trends := make([]*content.TrendTopic, 0, 64)
 
 	gTrends, err := h.googleClient.FetchDailyTrends(ctx, geo)
 	if err != nil {
 		logger.Warn("google trends fetch failed", zap.Error(err))
 	} else {
 		for _, t := range gTrends {
-			if err := h.saveTrend(ctx, payload.UserID, "google_trends", t.Title, t.Description,
-				t.Keywords, t.Score, t.SourceURL, t); err == nil {
-				total++
-			}
+			trends = append(trends, h.buildTrend(payload.UserID, "google_trends", t.Title, t.Description,
+				t.Keywords, t.Score, t.SourceURL, t))
 		}
 	}
 
@@ -74,10 +72,8 @@ func (h *TrendDiscoveryHandler) ProcessTask(ctx context.Context, task *asynq.Tas
 		logger.Warn("youtube fetch failed", zap.Error(err))
 	} else {
 		for _, v := range ytVideos {
-			if err := h.saveTrend(ctx, payload.UserID, "youtube", v.Title, v.Description,
-				v.Keywords, 0, v.SourceURL, v); err == nil {
-				total++
-			}
+			trends = append(trends, h.buildTrend(payload.UserID, "youtube", v.Title, v.Description,
+				v.Keywords, 0, v.SourceURL, v))
 		}
 	}
 
@@ -89,10 +85,8 @@ func (h *TrendDiscoveryHandler) ProcessTask(ctx context.Context, task *asynq.Tas
 			continue
 		}
 		for _, p := range posts {
-			if err := h.saveTrend(ctx, payload.UserID, "reddit", p.Title, p.Body,
-				p.Keywords, float64(p.Score), p.URL, p); err == nil {
-				total++
-			}
+			trends = append(trends, h.buildTrend(payload.UserID, "reddit", p.Title, p.Body,
+				p.Keywords, float64(p.Score), p.URL, p))
 		}
 	}
 
@@ -103,15 +97,19 @@ func (h *TrendDiscoveryHandler) ProcessTask(ctx context.Context, task *asynq.Tas
 			logger.Warn("vnexpress fetch failed", zap.Error(err))
 		} else {
 			for _, item := range vnItems {
-				if err := h.saveTrend(ctx, payload.UserID, "vnexpress", item.Title, item.Description,
-					item.Keywords, 0, item.SourceURL, item); err == nil {
-					total++
-				}
+				trends = append(trends, h.buildTrend(payload.UserID, "vnexpress", item.Title, item.Description,
+					item.Keywords, 0, item.SourceURL, item))
 			}
 		}
 	}
 
-	logger.Info("trend discovery complete", zap.Int("new_trends", total), zap.String("geo", geo))
+	// Single batched insert; duplicates are skipped via ON CONFLICT DO NOTHING.
+	if err := h.trendRepo.CreateBatch(ctx, trends); err != nil {
+		logger.Error("batch insert trends failed", zap.Error(err))
+		return err
+	}
+
+	logger.Info("trend discovery complete", zap.Int("fetched", len(trends)), zap.String("geo", geo))
 	return nil
 }
 
@@ -126,19 +124,15 @@ func (h *TrendDiscoveryHandler) getSubreddits() []string {
 	return []string{"marketing", "entrepreneur", "personalfinance", "fitness", "technology"}
 }
 
-func (h *TrendDiscoveryHandler) saveTrend(
-	ctx context.Context,
+// buildTrend constructs a TrendTopic entity (no DB write). De-duplication is
+// handled by CreateBatch's ON CONFLICT, so no per-row existence check is needed.
+func (h *TrendDiscoveryHandler) buildTrend(
 	userIDStr, source, title, desc string,
 	keywords []string,
 	score float64,
 	sourceURL string,
 	rawData any,
-) error {
-	exists, _ := h.trendRepo.ExistsBySourceAndTitle(ctx, source, title)
-	if exists {
-		return nil
-	}
-
+) *content.TrendTopic {
 	raw, _ := json.Marshal(rawData)
 	t := &content.TrendTopic{
 		ID:            uuid.New(),
@@ -153,13 +147,10 @@ func (h *TrendDiscoveryHandler) saveTrend(
 		DiscoveredAt:  time.Now(),
 		CreatedAt:     time.Now(),
 	}
-
 	if userIDStr != "" {
-		uid, err := uuid.Parse(userIDStr)
-		if err == nil {
+		if uid, err := uuid.Parse(userIDStr); err == nil {
 			t.UserID = &uid
 		}
 	}
-
-	return h.trendRepo.Create(ctx, t)
+	return t
 }

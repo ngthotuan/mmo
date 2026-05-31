@@ -11,6 +11,7 @@ import (
 	"mmo/internal/domain/channel"
 	"mmo/internal/integration/facebook"
 	"mmo/internal/integration/tiktok"
+	"mmo/internal/integration/youtubepublish"
 	"mmo/pkg/crypto"
 	apperr "mmo/pkg/errors"
 )
@@ -19,6 +20,7 @@ type ChannelUsecase struct {
 	repo                *repository.ChannelRepoWithAll
 	tiktok              *tiktok.Client
 	facebook            *facebook.Client
+	youtube             *youtubepublish.Client
 	cryptoKey           []byte
 	facebookTokenExpiry time.Duration
 	redis               *redis.Client
@@ -28,6 +30,7 @@ func NewChannelUsecase(
 	repo *repository.ChannelRepoWithAll,
 	tiktokClient *tiktok.Client,
 	facebookClient *facebook.Client,
+	youtubeClient *youtubepublish.Client,
 	encryptionKey string,
 	facebookTokenExpiry time.Duration,
 	redisClient *redis.Client,
@@ -36,6 +39,7 @@ func NewChannelUsecase(
 		repo:                repo,
 		tiktok:              tiktokClient,
 		facebook:            facebookClient,
+		youtube:             youtubeClient,
 		cryptoKey:           []byte(encryptionKey),
 		facebookTokenExpiry: facebookTokenExpiry,
 		redis:               redisClient,
@@ -61,9 +65,67 @@ func (uc *ChannelUsecase) GetAuthURL(platform channel.Platform, state string) (s
 		return uc.tiktok.AuthURL(state, challenge), nil
 	case channel.PlatformFacebook:
 		return uc.facebook.AuthURL(state), nil
+	case channel.PlatformYouTube:
+		return uc.youtube.AuthURL(state), nil
 	default:
 		return "", apperr.Newf(400, "unsupported platform: %s", platform)
 	}
+}
+
+// ConnectYouTube exchanges the OAuth code for tokens and upserts the channel.
+func (uc *ChannelUsecase) ConnectYouTube(ctx context.Context, userID uuid.UUID, code, state string) (*channel.Channel, error) {
+	tokens, err := uc.youtube.ExchangeCode(ctx, code)
+	if err != nil {
+		return nil, fmt.Errorf("youtube exchange code: %w", err)
+	}
+	profile, err := uc.youtube.GetUserInfo(ctx, tokens.AccessToken)
+	if err != nil {
+		return nil, fmt.Errorf("youtube get user info: %w", err)
+	}
+
+	encAccess, err := crypto.Encrypt(uc.cryptoKey, tokens.AccessToken)
+	if err != nil {
+		return nil, err
+	}
+	encRefresh, err := crypto.Encrypt(uc.cryptoKey, tokens.RefreshToken)
+	if err != nil {
+		return nil, err
+	}
+	expiresAt := time.Now().Add(time.Duration(tokens.ExpiresIn) * time.Second)
+
+	existing, err := uc.repo.GetByPlatformUserID(ctx, channel.PlatformYouTube, profile.ChannelID)
+	if err == nil {
+		existing.AccessToken = encAccess
+		if tokens.RefreshToken != "" {
+			existing.RefreshToken = encRefresh
+		}
+		existing.TokenExpiresAt = &expiresAt
+		existing.DisplayName = profile.Title
+		existing.AvatarURL = profile.AvatarURL
+		existing.IsActive = true
+		if err := uc.repo.Update(ctx, existing); err != nil {
+			return nil, err
+		}
+		return existing, nil
+	}
+
+	ch := &channel.Channel{
+		ID:             uuid.New(),
+		UserID:         userID,
+		Platform:       channel.PlatformYouTube,
+		PlatformUserID: profile.ChannelID,
+		Username:       profile.CustomURL,
+		DisplayName:    profile.Title,
+		AvatarURL:      profile.AvatarURL,
+		AccessToken:    encAccess,
+		RefreshToken:   encRefresh,
+		TokenExpiresAt: &expiresAt,
+		IsActive:       true,
+	}
+	if err := uc.repo.Create(ctx, ch); err != nil {
+		return nil, err
+	}
+	return ch, nil
 }
 
 // ConnectTikTok exchanges the OAuth code for tokens and upserts the channel.

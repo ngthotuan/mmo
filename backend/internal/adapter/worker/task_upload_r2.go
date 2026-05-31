@@ -142,6 +142,11 @@ func (h *R2UploadHandler) maybeAutoPublish(ctx context.Context, planID, videoJob
 			if !ch.IsActive || !strings.EqualFold(string(ch.Platform), target) {
 				continue
 			}
+			// Idempotency: skip if a publish_job already exists for this
+			// (video_job, channel) pair — guards against R2-upload retries.
+			if exists, _ := h.publishRepo.ExistsForVideoJobChannel(ctx, videoJobID, ch.ID); exists {
+				continue
+			}
 			pcopy := planID
 			pj := &publish.Job{
 				ID:            uuid.New(),

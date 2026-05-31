@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Play, Trash2, Loader2, Bot, Pencil } from "lucide-react";
+import { Plus, Play, Trash2, Loader2, Bot, Pencil, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/button";
@@ -49,6 +49,16 @@ export default function AutoPilotPage() {
     },
   });
 
+  const quickSetupMut = useMutation({
+    mutationFn: () => autoPilotApi.quickSetup(),
+    onSuccess: () => {
+      toast.success("Đã tạo kênh MMO (dry-run) — bấm 'Chạy ngay' để thử pipeline");
+      qc.invalidateQueries({ queryKey: ["auto-pilot"] });
+      qc.invalidateQueries({ queryKey: ["channels"] });
+    },
+    onError: () => toast.error("Tạo kênh MMO nhanh thất bại"),
+  });
+
   return (
     <div className="flex flex-col gap-6 p-6">
       <Header
@@ -56,7 +66,20 @@ export default function AutoPilotPage() {
         description="Cấu hình kênh ảo để app tự động sản xuất video theo lịch — không cần thao tác thủ công"
       />
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button
+          variant="outline"
+          className="gap-2"
+          onClick={() => quickSetupMut.mutate()}
+          disabled={quickSetupMut.isPending}
+        >
+          {quickSetupMut.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Sparkles className="h-4 w-4 text-violet-500" />
+          )}
+          Tạo kênh MMO nhanh
+        </Button>
         <Button className="gap-2" onClick={() => setCreating(true)}>
           <Plus className="h-4 w-4" />
           Tạo Profile mới

@@ -11,6 +11,7 @@ import (
 	"mmo/internal/domain/publish"
 	"mmo/internal/integration/facebook"
 	"mmo/internal/integration/tiktok"
+	"mmo/internal/integration/youtubepublish"
 	"mmo/pkg/crypto"
 	"mmo/pkg/logger"
 	"mmo/pkg/util"
@@ -23,6 +24,7 @@ type AnalyticsSyncHandler struct {
 	analyticsRepo *repository.AnalyticsRepo
 	tiktok       *tiktok.Client
 	facebook     *facebook.Client
+	youtube      *youtubepublish.Client
 	encKey       string
 }
 
@@ -32,6 +34,7 @@ func NewAnalyticsSyncHandler(
 	analyticsRepo *repository.AnalyticsRepo,
 	tiktokClient *tiktok.Client,
 	fbClient *facebook.Client,
+	ytClient *youtubepublish.Client,
 	encKey string,
 ) *AnalyticsSyncHandler {
 	return &AnalyticsSyncHandler{
@@ -40,6 +43,7 @@ func NewAnalyticsSyncHandler(
 		analyticsRepo: analyticsRepo,
 		tiktok:        tiktokClient,
 		facebook:      fbClient,
+		youtube:       ytClient,
 		encKey:        encKey,
 	}
 }
@@ -101,6 +105,15 @@ func (h *AnalyticsSyncHandler) ProcessTask(ctx context.Context, _ *asynq.Task) e
 			analytics.Comments = stats.Comments
 			analytics.Shares = stats.Shares
 			analytics.Reach = stats.Reach
+		case "youtube":
+			stats, err := h.youtube.GetVideoStats(ctx, accessToken, job.PlatformPostID)
+			if err != nil {
+				logger.Warn("youtube stats fetch failed", zap.Error(err))
+				continue
+			}
+			analytics.Views = stats.ViewCount
+			analytics.Likes = stats.LikeCount
+			analytics.Comments = stats.CommentCount
 		}
 
 		raw, _ := json.Marshal(analytics)

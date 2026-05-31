@@ -13,15 +13,19 @@ import (
 	"mmo/internal/infrastructure/ffmpeg"
 	"mmo/internal/infrastructure/queue"
 	"mmo/internal/infrastructure/storage"
+	"mmo/internal/domain/ai"
+	"mmo/internal/integration/aifallback"
 	"mmo/internal/integration/edgetts"
 	"mmo/internal/integration/facebook"
 	"mmo/internal/integration/gemini"
 	"mmo/internal/integration/googletrends"
+	"mmo/internal/integration/mockai"
 	"mmo/internal/integration/pexels"
 	"mmo/internal/integration/pixabay"
 	"mmo/internal/integration/reddit"
 	"mmo/internal/integration/tiktok"
 	"mmo/internal/integration/youtube"
+	"mmo/internal/integration/youtubepublish"
 	"mmo/internal/usecase"
 	"mmo/pkg/config"
 	"mmo/pkg/logger"
@@ -61,13 +65,14 @@ func main() {
 	// ─── Integration clients ─────────────────────────────────────────────────
 	tiktokClient   := tiktok.New(cfg.TikTok)
 	facebookClient := facebook.New(cfg.Facebook)
-	geminiClient   := gemini.New(cfg.Gemini)
+	scriptGen      := buildScriptGenerator(cfg)
 	pexelsClient   := pexels.New(cfg.Pexels)
 	pixabayClient  := pixabay.New(cfg.Pixabay)
 	ttsClient      := edgetts.New(cfg.EdgeTTS)
 	assembler      := ffmpeg.New(cfg.FFmpeg)
 	googleClient   := googletrends.New(cfg.GoogleTrends)
 	youtubeClient  := youtube.New(cfg.YouTube)
+	ytPublishClient := youtubepublish.New(cfg.YouTubePublish)
 	redditClient   := reddit.New(cfg.Reddit)
 
 	// ─── Queue client (for task chaining) ────────────────────────────────────
@@ -75,17 +80,18 @@ func main() {
 	defer queueClient.Close()
 
 	// ─── Task handlers ───────────────────────────────────────────────────────
-	refreshHandler  := workerhandler.NewRefreshTokensHandler(channelRepo, tiktokClient, cfg.Auth.EncryptionKey)
+	refreshHandler  := workerhandler.NewRefreshTokensHandler(channelRepo, tiktokClient, ytPublishClient, cfg.Auth.EncryptionKey)
 	discoverHandler := workerhandler.NewTrendDiscoveryHandler(trendRepo, cfg, googleClient, youtubeClient, redditClient)
-	scriptHandler   := workerhandler.NewScriptGenHandler(trendRepo, planRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language)
+	scriptHandler   := workerhandler.NewScriptGenHandler(trendRepo, planRepo, scriptGen, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language)
 	mediaHandler    := workerhandler.NewMediaCollectHandler(planRepo, videoJobRepo, pexelsClient, pixabayClient, r2, queueClient, assembler, cfg.MediaCollect.HTTPTimeout, cfg.Video.MaxClips)
 	ttsHandler      := workerhandler.NewTTSHandler(videoJobRepo, ttsClient, r2, queueClient, assembler)
 	assemblyHandler := workerhandler.NewVideoAssemblyHandler(videoJobRepo, assembler, r2, queueClient)
 	uploadHandler        := workerhandler.NewR2UploadHandler(videoJobRepo, planRepo, r2, assembler, autoPilotRepo, channelRepo, publishRepo)
-	publishHandler       := workerhandler.NewPublishHandler(publishRepo, channelRepo, videoJobRepo, productRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey)
+	publishHandler       := workerhandler.NewPublishHandler(publishRepo, channelRepo, videoJobRepo, planRepo, productRepo, tiktokClient, facebookClient, ytPublishClient, cfg.Auth.EncryptionKey, cfg.Publish.DryRun, cfg.Publish.MaxRetryAttempts)
 	checkPublishHandler  := workerhandler.NewCheckPublishHandler(publishRepo, queueClient)
-	analyticsSyncHandler := workerhandler.NewAnalyticsSyncHandler(publishRepo, channelRepo, analyticsRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey)
-	autoPilotUC          := usecase.NewAutoPilotUsecase(autoPilotRepo, trendRepo, planRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language)
+	retryPublishHandler  := workerhandler.NewRetryPublishHandler(publishRepo, queueClient, cfg.Publish.MaxRetryAttempts)
+	analyticsSyncHandler := workerhandler.NewAnalyticsSyncHandler(publishRepo, channelRepo, analyticsRepo, tiktokClient, facebookClient, ytPublishClient, cfg.Auth.EncryptionKey)
+	autoPilotUC          := usecase.NewAutoPilotUsecase(autoPilotRepo, trendRepo, planRepo, channelRepo, scriptGen, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language, cfg.AutoPilot.TickBatchSize)
 	autoPilotHandler     := workerhandler.NewAutoPilotTickHandler(autoPilotUC)
 
 	// ─── Asynq server ────────────────────────────────────────────────────────
@@ -105,6 +111,7 @@ func main() {
 	mux.HandleFunc(queue.TaskPublishNow,    publishHandler.ProcessTask)
 	if !*videoOnly {
 		mux.HandleFunc(queue.TaskCheckPublish,   checkPublishHandler.ProcessTask)
+		mux.HandleFunc(queue.TaskRetryPublish,   retryPublishHandler.ProcessTask)
 		mux.HandleFunc(queue.TaskSyncAnalytics,  analyticsSyncHandler.ProcessTask)
 		mux.HandleFunc(queue.TaskAutoPilotTick,  autoPilotHandler.ProcessTask)
 	}
@@ -120,6 +127,7 @@ func main() {
 			q    string
 		}{
 			{cfg.Schedule.CheckPublish,   queue.TaskCheckPublish,   queue.QueueCritical},
+			{cfg.Schedule.RetryPublish,   queue.TaskRetryPublish,   queue.QueueLow},
 			{cfg.Schedule.DiscoverTrends, queue.TaskDiscoverTrends, queue.QueueLow},
 			{cfg.Schedule.SyncAnalytics,  queue.TaskSyncAnalytics,  queue.QueueLow},
 			{cfg.Schedule.RefreshTokens,  queue.TaskRefreshTokens,  queue.QueueLow},
@@ -159,4 +167,24 @@ func main() {
 	logger.Info("shutting down worker...")
 	srv.Shutdown()
 	logger.Info("worker stopped")
+}
+
+// buildScriptGenerator selects the AI provider from config and optionally wraps
+// it with a mock fallback so generation keeps working when the primary is down.
+func buildScriptGenerator(cfg *config.Config) ai.ScriptGenerator {
+	var gen ai.ScriptGenerator
+	switch cfg.AI.Provider {
+	case "mock":
+		logger.Info("AI provider: mock (deterministic, no network)")
+		return mockai.New()
+	default:
+		gen = gemini.New(cfg.Gemini)
+	}
+	if cfg.AI.FallbackToMock {
+		gen = aifallback.New(gen, mockai.New())
+	}
+	logger.Info("AI provider configured",
+		zap.String("provider", cfg.AI.Provider),
+		zap.Bool("fallback_to_mock", cfg.AI.FallbackToMock))
+	return gen
 }
