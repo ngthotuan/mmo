@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"go.uber.org/zap"
 	"mmo/internal/adapter/repository"
 	"mmo/internal/domain/content"
 	"mmo/internal/domain/publish"
@@ -17,7 +18,6 @@ import (
 	"mmo/internal/infrastructure/ffmpeg"
 	"mmo/internal/infrastructure/storage"
 	"mmo/pkg/logger"
-	"go.uber.org/zap"
 )
 
 type R2UploadHandler struct {
@@ -140,6 +140,11 @@ func (h *R2UploadHandler) maybeAutoPublish(ctx context.Context, planID, videoJob
 	for _, target := range profile.TargetPlatforms {
 		for _, ch := range channels {
 			if !ch.IsActive || !strings.EqualFold(string(ch.Platform), target) {
+				continue
+			}
+			// Idempotency: skip if a publish_job already exists for this
+			// (video_job, channel) pair — guards against R2-upload retries.
+			if exists, _ := h.publishRepo.ExistsForVideoJobChannel(ctx, videoJobID, ch.ID); exists {
 				continue
 			}
 			pcopy := planID

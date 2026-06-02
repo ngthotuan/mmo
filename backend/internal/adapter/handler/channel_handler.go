@@ -40,6 +40,7 @@ func (h *ChannelHandler) List(c *gin.Context) {
 		DisplayName    string           `json:"display_name"`
 		AvatarURL      string           `json:"avatar_url"`
 		IsActive       bool             `json:"is_active"`
+		DryRun         bool             `json:"dry_run"`
 		TokenExpiresAt interface{}      `json:"token_expires_at"`
 	}
 
@@ -53,6 +54,7 @@ func (h *ChannelHandler) List(c *gin.Context) {
 			DisplayName:    ch.DisplayName,
 			AvatarURL:      ch.AvatarURL,
 			IsActive:       ch.IsActive,
+			DryRun:         ch.DryRun,
 			TokenExpiresAt: ch.TokenExpiresAt,
 		}
 	}
@@ -89,6 +91,26 @@ func (h *ChannelHandler) ConnectTikTok(c *gin.Context) {
 	}
 
 	ch, err := h.uc.ConnectTikTok(c.Request.Context(), userID, body.Code, body.State)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, channelToDTO(ch))
+}
+
+// POST /channels/oauth/youtube
+func (h *ChannelHandler) ConnectYouTube(c *gin.Context) {
+	userID := mustParseUserID(c)
+	var body struct {
+		Code  string `json:"code"  binding:"required"`
+		State string `json:"state" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, apperr.ErrBadRequest)
+		return
+	}
+
+	ch, err := h.uc.ConnectYouTube(c.Request.Context(), userID, body.Code, body.State)
 	if err != nil {
 		respondErr(c, err)
 		return
@@ -202,6 +224,7 @@ func channelToDTO(ch *channel.Channel) gin.H {
 		"display_name":     ch.DisplayName,
 		"avatar_url":       ch.AvatarURL,
 		"is_active":        ch.IsActive,
+		"dry_run":          ch.DryRun,
 		"token_expires_at": ch.TokenExpiresAt,
 	}
 }

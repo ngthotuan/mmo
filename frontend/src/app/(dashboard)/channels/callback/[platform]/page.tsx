@@ -11,6 +11,7 @@ import { channelsApi } from "@/lib/api/channels";
 type Step =
   | "detecting"
   | "tiktok_connecting"
+  | "youtube_connecting"
   | "facebook_pages"
   | "facebook_connecting"
   | "done"
@@ -50,6 +51,20 @@ function OAuthCallbackContent() {
         })
         .catch((err) => {
           const msg = err?.response?.data?.message ?? "Failed to connect TikTok";
+          setError(msg);
+          setStep("error");
+        });
+    } else if (platform === "youtube") {
+      setStep("youtube_connecting");
+      channelsApi
+        .connectYouTube(code, state)
+        .then(() => {
+          setStep("done");
+          toast.success("YouTube channel connected!");
+          setTimeout(() => router.push("/channels"), 1500);
+        })
+        .catch((err) => {
+          const msg = err?.response?.data?.message ?? "Failed to connect YouTube";
           setError(msg);
           setStep("error");
         });
@@ -95,6 +110,7 @@ function OAuthCallbackContent() {
           <CardTitle className="text-center">
             {step === "detecting"           && "Processing…"}
             {step === "tiktok_connecting"   && "Connecting TikTok…"}
+            {step === "youtube_connecting"  && "Connecting YouTube…"}
             {step === "facebook_pages"      && "Select a Facebook Page"}
             {step === "facebook_connecting" && "Connecting Page…"}
             {step === "done"                && "Connected!"}
@@ -102,7 +118,7 @@ function OAuthCallbackContent() {
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col items-center gap-4">
-          {(step === "detecting" || step === "tiktok_connecting" || step === "facebook_connecting") && (
+          {(step === "detecting" || step === "tiktok_connecting" || step === "youtube_connecting" || step === "facebook_connecting") && (
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           )}
 

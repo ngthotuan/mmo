@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"mmo/pkg/config"
@@ -135,6 +136,71 @@ func joinLines(lines []string) string {
 		result += l + "\n"
 	}
 	return result
+}
+
+// MergeSRTFiles concatenates per-scene SRT files into one global SRT, shifting
+// each file's timestamps by its offset (seconds) so cues line up with the
+// concatenated narration. Empty paths are skipped (offset slot still consumed).
+func MergeSRTFiles(srtPaths []string, offsetsSec []float64, outPath string) error {
+	var b strings.Builder
+	counter := 1
+	for i, p := range srtPaths {
+		if p == "" {
+			continue
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		off := 0.0
+		if i < len(offsetsSec) {
+			off = offsetsSec[i]
+		}
+		lines := splitLines(string(data))
+		j := 0
+		for j < len(lines) {
+			if strings.Contains(lines[j], "-->") {
+				ts := shiftSRTTimestampLine(lines[j], off)
+				j++
+				var text []string
+				for j < len(lines) && strings.TrimSpace(lines[j]) != "" {
+					text = append(text, lines[j])
+					j++
+				}
+				b.WriteString(fmt.Sprintf("%d\n%s\n%s\n\n", counter, ts, strings.Join(text, "\n")))
+				counter++
+			} else {
+				j++
+			}
+		}
+	}
+	return os.WriteFile(outPath, []byte(b.String()), 0644)
+}
+
+func shiftSRTTimestampLine(line string, offsetSec float64) string {
+	parts := strings.Split(line, "-->")
+	if len(parts) != 2 {
+		return line
+	}
+	return shiftTS(strings.TrimSpace(parts[0]), offsetSec) + " --> " + shiftTS(strings.TrimSpace(parts[1]), offsetSec)
+}
+
+func shiftTS(ts string, offsetSec float64) string {
+	var h, m, s, ms int
+	if _, err := fmt.Sscanf(ts, "%d:%d:%d,%d", &h, &m, &s, &ms); err != nil {
+		return ts
+	}
+	total := (h*3600+m*60+s)*1000 + ms + int(offsetSec*1000+0.5)
+	if total < 0 {
+		total = 0
+	}
+	hh := total / 3600000
+	total %= 3600000
+	mm := total / 60000
+	total %= 60000
+	ss := total / 1000
+	mmm := total % 1000
+	return fmt.Sprintf("%02d:%02d:%02d,%03d", hh, mm, ss, mmm)
 }
 
 func replaceDotsInTimestamp(ts string) string {

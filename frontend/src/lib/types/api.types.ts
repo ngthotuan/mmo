@@ -1,4 +1,4 @@
-export type Platform = "tiktok" | "facebook";
+export type Platform = "tiktok" | "facebook" | "youtube";
 
 export type ContentStatus =
   | "draft"
@@ -42,6 +42,7 @@ export interface Channel {
   display_name: string;
   avatar_url: string;
   is_active: boolean;
+  dry_run?: boolean;
   created_at: string;
   updated_at: string;
 }

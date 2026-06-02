@@ -33,6 +33,15 @@ export interface AutoPilotInput {
   enabled?: boolean;
 }
 
+export interface QuickSetupInput {
+  name?: string;
+  niche?: string;
+  voice?: string;
+  platforms?: string[];
+  schedule_times?: string[];
+  daily_count?: number;
+}
+
 export const autoPilotApi = {
   list: async (): Promise<{ data: AutoPilotProfile[]; total: number }> => {
     const { data } = await apiClient.get("/api/v1/auto-pilot");
@@ -41,6 +50,11 @@ export const autoPilotApi = {
 
   get: async (id: string): Promise<AutoPilotProfile> => {
     const { data } = await apiClient.get(`/api/v1/auto-pilot/${id}`);
+    return data.data;
+  },
+
+  quickSetup: async (input?: QuickSetupInput): Promise<AutoPilotProfile> => {
+    const { data } = await apiClient.post("/api/v1/auto-pilot/quick-setup", input ?? {});
     return data.data;
   },
 

@@ -161,6 +161,35 @@ func (h *AutoPilotHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"data": toAutoPilotDTO(p)})
 }
 
+// POST /auto-pilot/quick-setup — one-click MMO channel: provisions dry-run
+// channels + an enabled Vietnamese-MMO auto-pilot profile.
+func (h *AutoPilotHandler) QuickSetup(c *gin.Context) {
+	userID := mustParseUserID(c)
+	var body struct {
+		Name          string   `json:"name"`
+		Niche         string   `json:"niche"`
+		Voice         string   `json:"voice"`
+		Platforms     []string `json:"platforms"`
+		ScheduleTimes []string `json:"schedule_times"`
+		DailyCount    int      `json:"daily_count"`
+	}
+	_ = c.ShouldBindJSON(&body) // all fields optional; defaults applied in usecase
+
+	p, err := h.uc.QuickSetup(c.Request.Context(), userID, usecase.QuickSetupInput{
+		Name:          body.Name,
+		Niche:         body.Niche,
+		Voice:         body.Voice,
+		Platforms:     body.Platforms,
+		ScheduleTimes: body.ScheduleTimes,
+		DailyCount:    body.DailyCount,
+	})
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": toAutoPilotDTO(p)})
+}
+
 // PUT /auto-pilot/:id
 func (h *AutoPilotHandler) Update(c *gin.Context) {
 	userID := mustParseUserID(c)

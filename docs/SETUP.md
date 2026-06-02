@@ -34,9 +34,8 @@ make dev-bg
 Services started:
 | Service | URL | Notes |
 |---|---|---|
-| Frontend | http://localhost:3000 | Next.js |
-| Backend API | http://localhost:8080 | via nginx at :80 too |
-| Nginx | http://localhost:80 | routes /api → backend, / → frontend |
+| Frontend | http://localhost:3000 | Next.js — open this in the browser |
+| Backend API | http://localhost:8080 | FE calls `/api/v1` here directly (CORS allows localhost) |
 | PostgreSQL | localhost:5432 | `mmo` / `mmo_dev_password` |
 | Redis | localhost:6379 | no auth in dev |
 
@@ -136,11 +135,42 @@ Enable "Public access" on the R2 bucket for video playback URLs to work.
 # Google Gemini — script generation (1,500 free requests/day)
 GEMINI_API_KEY=your-gemini-key        # https://aistudio.google.com/apikey
 
+# AI provider abstraction (script generation is behind the ai.ScriptGenerator port)
+AI_PROVIDER=gemini                    # gemini | mock  (mock = deterministic, no network)
+AI_FALLBACK_TO_MOCK=true              # on Gemini error/quota, fall back to mock (logged)
+GEMINI_MODEL=gemini-2.5-flash         # config-driven model name
+
 # Stock media (free tiers)
 PEXELS_API_KEY=your-pexels-key        # https://www.pexels.com/api/
 PIXABAY_API_KEY=your-pixabay-key      # https://pixabay.com/api/docs/
-YOUTUBE_API_KEY=your-youtube-key      # https://console.cloud.google.com
+YOUTUBE_API_KEY=your-youtube-key      # https://console.cloud.google.com  (trending discovery only)
 ```
+
+### Dry-run publishing (test the whole pipeline without posting)
+
+```env
+PUBLISH_DRY_RUN=true   # ALL publishes are mocked — produces real videos, no social posting
+```
+
+When `true`, the pipeline runs end-to-end (discover → script → media → TTS → FFmpeg →
+R2 upload → publish) but the publish step returns a synthetic `dryrun_<platform>_<uuid>`
+post id instead of calling TikTok/Facebook/YouTube. A **per-channel** `dry_run` flag does
+the same for individual channels (used by the one-click "MMO channel" quick-setup). For a
+fully hermetic local run, combine with `AI_PROVIDER=mock`.
+
+### YouTube Shorts OAuth (publishing)
+
+Separate from `YOUTUBE_API_KEY` (which is only for trending discovery). Create an OAuth 2.0
+Client (type: Web) in Google Cloud Console with the `youtube.upload` scope:
+
+```env
+YOUTUBE_OAUTH_CLIENT_ID=your-google-oauth-client-id
+YOUTUBE_OAUTH_CLIENT_SECRET=your-google-oauth-client-secret
+YOUTUBE_PRIVACY_STATUS=unlisted       # public | unlisted | private
+```
+
+Redirect URL (in `config.yml`): `${FRONTEND_URL}/channels/callback/youtube`.
+Uploaded videos get `#Shorts` appended so YouTube classifies the vertical clip as a Short.
 
 ### TikTok OAuth
 
@@ -295,12 +325,16 @@ DATABASE_URL=postgres://mmo:STRONG_PASSWORD@postgres:5432/mmo?sslmode=require
 
 ### 5.3 SSL / HTTPS
 
-Use Caddy or Certbot in front of Nginx:
+> Production deploy chi tiết (CI/CD, secrets, DB, reverse proxy) ở `docs/DEPLOY.md`.
+> Stack không có nginx container — reverse proxy do host quản, trỏ `/api` → `:8080`
+> và `/` → `:3000` (same-origin).
 
-**Caddy (recommended):**
+**Caddy (recommended)** — tự động HTTPS, route same-origin:
 ```
 yourdomain.com {
-    reverse_proxy localhost:80
+    reverse_proxy /api/* localhost:8080
+    reverse_proxy /webhooks/* localhost:8080
+    reverse_proxy localhost:3000
 }
 ```
 

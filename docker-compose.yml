@@ -8,6 +8,10 @@ services:
     command: /app/bin/api
     restart: unless-stopped
     env_file: .env
+    # DATABASE_URL/REDIS_URL default to host.docker.internal (DB/Redis on the
+    # host). On Linux that name only resolves with this mapping.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8080:8080"
     volumes:
@@ -28,6 +32,8 @@ services:
     command: /app/bin/worker
     restart: unless-stopped
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /tmp/mmo-media:/tmp/mmo-media
     depends_on:
@@ -42,6 +48,8 @@ services:
     command: /app/bin/worker --video-only
     restart: unless-stopped
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /tmp/mmo-media:/tmp/mmo-media
     depends_on:
@@ -52,6 +60,13 @@ services:
     build:
       context: ./frontend
       dockerfile: ../infra/docker/frontend.Dockerfile
+      args:
+        # NEXT_PUBLIC_* is inlined at build time. No bundled nginx — the browser
+        # calls the API directly on the published backend port. The FE client adds
+        # the /api/v1 prefix itself, so this is the ORIGIN only (no /api suffix).
+        # For production set NEXT_PUBLIC_API_URL to your real domain
+        # (e.g. https://your-domain.com), served by the host's own reverse proxy.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     restart: unless-stopped
     env_file: .env
     ports:
@@ -59,16 +74,3 @@ services:
     depends_on:
       backend-api:
         condition: service_healthy
-
-  nginx:
-    image: nginx:alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-    volumes:
-      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      backend-api:
-        condition: service_healthy
-      frontend:
-        condition: service_started

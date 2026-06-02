@@ -2,11 +2,30 @@
 
 ## Overview
 
-AutoContent automates the full TikTok/Facebook video pipeline:
+AutoContent automates the full TikTok/Facebook/YouTube Shorts video pipeline:
 
 ```
 Discover Trends → Review Script → Video Assembles → Schedule → Publish → Analyze
 ```
+
+---
+
+## 0. Quick start — one-click "MMO channel" (tiếng Việt)
+
+The fastest way to see the whole thing run automatically:
+
+1. **Auto Pilot** page → click **"Tạo kênh MMO nhanh"**. This provisions a
+   Vietnamese make-money-online auto-pilot profile (niche *kiếm tiền online*, voice
+   `vi-VN-HoaiMyNeural`, daily schedule, auto-approve + auto-publish) plus three
+   **dry-run** channels (TikTok, Facebook, YouTube) that require no OAuth.
+2. **Content** page → **Discover trends** (or wait for the 6-hourly cron).
+3. Back on **Auto Pilot** → **Chạy ngay** on the profile. The app now, with no further
+   clicks: writes a script → collects stock clips → generates Vietnamese narration →
+   assembles a 9:16 video → uploads it → "publishes" it to all three platforms.
+
+Because the channels are **dry-run**, nothing is posted to real accounts — each publish
+gets a synthetic `dryrun_<platform>_<id>`. To go live, connect real channels (section 1.2)
+and set the profile's target platforms to them (or turn off `PUBLISH_DRY_RUN`).
 
 ---
 

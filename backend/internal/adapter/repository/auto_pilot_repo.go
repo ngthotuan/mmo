@@ -134,6 +134,31 @@ func (r *AutoPilotRepo) ListEnabled(ctx context.Context) ([]*autopilot.Profile, 
 	return out, nil
 }
 
+// ListDueEnabled returns up to `limit` enabled profiles that plausibly have a
+// schedule slot due (last run older than ~20m, or never run), ordered oldest
+// first. This bounds per-tick memory/CPU; shouldRun() is the exact gate.
+func (r *AutoPilotRepo) ListDueEnabled(ctx context.Context, limit int) ([]*autopilot.Profile, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	var rows []autoPilotRow
+	if err := r.db.SelectContext(ctx, &rows,
+		`SELECT * FROM auto_pilot_profiles
+		 WHERE enabled = TRUE
+		   AND (last_run_at IS NULL OR last_run_at < NOW() - INTERVAL '20 minutes')
+		 ORDER BY COALESCE(last_run_at, 'epoch'::timestamptz) ASC
+		 LIMIT $1`,
+		limit,
+	); err != nil {
+		return nil, err
+	}
+	out := make([]*autopilot.Profile, len(rows))
+	for i, row := range rows {
+		out[i] = row.toEntity()
+	}
+	return out, nil
+}
+
 func (r *AutoPilotRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM auto_pilot_profiles WHERE id=$1`, id)
 	return err

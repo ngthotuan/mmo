@@ -2,7 +2,12 @@
 
 ## What this project is
 
-Full-stack social media automation platform: trend discovery → AI script → FFmpeg video → TikTok/Facebook publish, with analytics and e-commerce product tagging.
+Full-stack social media automation platform: trend discovery → AI script → FFmpeg video → TikTok/Facebook/YouTube Shorts publish, with analytics and e-commerce product tagging.
+
+**Key cross-cutting features:**
+- **AI provider abstraction** — script generation is behind the `internal/domain/ai.ScriptGenerator` port (Gemini is the default impl; `mockai` for hermetic tests; `aifallback` wraps primary→mock). Select via `AI_PROVIDER` / `AI_FALLBACK_TO_MOCK`.
+- **Dry-run publishing** — `PUBLISH_DRY_RUN=true` (global) or a per-channel `dry_run` flag mocks the publish step (synthetic `dryrun_<platform>_<id>`), so the full pipeline runs without real OAuth/posting. Used by the one-click "MMO channel" quick-setup (`POST /api/v1/auto-pilot/quick-setup`).
+- **Publish auto-retry** — failed publishes get exponential backoff via `next_retry_at` + a `task:retry_publish` cron; `Claim()` makes publishing idempotent.
 
 Monorepo layout:
 ```

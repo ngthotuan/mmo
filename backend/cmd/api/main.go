@@ -10,19 +10,23 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"mmo/internal/adapter/handler"
 	"mmo/internal/adapter/repository"
+	"mmo/internal/domain/ai"
 	infradb "mmo/internal/infrastructure/db"
 	infraqueue "mmo/internal/infrastructure/queue"
 	"mmo/internal/infrastructure/storage"
+	"mmo/internal/integration/aifallback"
 	"mmo/internal/integration/facebook"
 	"mmo/internal/integration/gemini"
+	"mmo/internal/integration/mockai"
 	"mmo/internal/integration/tiktok"
+	"mmo/internal/integration/youtubepublish"
 	"mmo/internal/usecase"
 	"mmo/pkg/config"
 	"mmo/pkg/logger"
 	"mmo/pkg/middleware"
-	"go.uber.org/zap"
 )
 
 func main() {
@@ -41,15 +45,15 @@ func main() {
 	}
 
 	// ─── Repositories ────────────────────────────────────────────────────────
-	channelRepo     := repository.NewChannelRepo(db)
-	trendRepo       := repository.NewTrendRepo(db)
+	channelRepo := repository.NewChannelRepo(db)
+	trendRepo := repository.NewTrendRepo(db)
 	contentPlanRepo := repository.NewContentPlanRepo(db)
-	videoJobRepo    := repository.NewVideoJobRepo(db)
-	videoTemplRepo  := repository.NewVideoTemplateRepo(db)
-	publishRepo     := repository.NewPublishJobRepo(db)
-	analyticsRepo   := repository.NewAnalyticsRepo(db)
-	productRepo     := repository.NewProductRepo(db)
-	autoPilotRepo   := repository.NewAutoPilotRepo(db)
+	videoJobRepo := repository.NewVideoJobRepo(db)
+	videoTemplRepo := repository.NewVideoTemplateRepo(db)
+	publishRepo := repository.NewPublishJobRepo(db)
+	analyticsRepo := repository.NewAnalyticsRepo(db)
+	productRepo := repository.NewProductRepo(db)
+	autoPilotRepo := repository.NewAutoPilotRepo(db)
 
 	// ─── Infrastructure ───────────────────────────────────────────────────────
 	r2, err := storage.NewR2(cfg.R2)
@@ -70,29 +74,30 @@ func main() {
 	defer redisClient.Close()
 
 	// ─── Integration clients ─────────────────────────────────────────────────
-	tiktokClient   := tiktok.New(cfg.TikTok)
+	tiktokClient := tiktok.New(cfg.TikTok)
 	facebookClient := facebook.New(cfg.Facebook)
-	geminiClient   := gemini.New(cfg.Gemini)
+	ytPublishClient := youtubepublish.New(cfg.YouTubePublish)
+	scriptGen := buildScriptGenerator(cfg)
 
 	// ─── Use cases ───────────────────────────────────────────────────────────
-	channelUC  := usecase.NewChannelUsecase(channelRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey, cfg.Channel.FacebookTokenExpiry, redisClient)
-	contentUC  := usecase.NewContentUsecase(trendRepo, contentPlanRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language)
-	videoUC    := usecase.NewVideoUsecase(videoJobRepo, videoTemplRepo, r2, queueClient, cfg.Video.PresignedURLTTL)
-	publishUC   := usecase.NewPublishUsecase(publishRepo, videoJobRepo, channelRepo, queueClient, cfg.Publish.MinScheduleBeforeNow)
+	channelUC := usecase.NewChannelUsecase(channelRepo, tiktokClient, facebookClient, ytPublishClient, cfg.Auth.EncryptionKey, cfg.Channel.FacebookTokenExpiry, redisClient)
+	contentUC := usecase.NewContentUsecase(trendRepo, contentPlanRepo, scriptGen, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language)
+	videoUC := usecase.NewVideoUsecase(videoJobRepo, videoTemplRepo, r2, queueClient, cfg.Video.PresignedURLTTL)
+	publishUC := usecase.NewPublishUsecase(publishRepo, videoJobRepo, channelRepo, queueClient, cfg.Publish.MinScheduleBeforeNow)
 	analyticsUC := usecase.NewAnalyticsUsecase(analyticsRepo)
-	productUC   := usecase.NewProductUsecase(productRepo, channelRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey)
-	autoPilotUC := usecase.NewAutoPilotUsecase(autoPilotRepo, trendRepo, contentPlanRepo, geminiClient, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language)
+	productUC := usecase.NewProductUsecase(productRepo, channelRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey)
+	autoPilotUC := usecase.NewAutoPilotUsecase(autoPilotRepo, trendRepo, contentPlanRepo, channelRepo, scriptGen, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language, cfg.AutoPilot.TickBatchSize)
 
 	// ─── Handlers ────────────────────────────────────────────────────────────
-	healthHandler  := handler.NewHealthHandler(db)
-	authHandler    := handler.NewAuthHandler(db, cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)
+	healthHandler := handler.NewHealthHandler(db)
+	authHandler := handler.NewAuthHandler(db, cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)
 	channelHandler := handler.NewChannelHandler(channelUC)
 	contentHandler := handler.NewContentHandler(contentUC)
-	videoHandler   := handler.NewVideoHandler(videoUC)
-	publishHandler   := handler.NewPublishHandler(publishUC)
+	videoHandler := handler.NewVideoHandler(videoUC)
+	publishHandler := handler.NewPublishHandler(publishUC)
 	analyticsHandler := handler.NewAnalyticsHandler(analyticsUC)
-	pipelineHandler  := handler.NewPipelineHandler(videoJobRepo, publishRepo)
-	productHandler   := handler.NewProductHandler(productUC)
+	pipelineHandler := handler.NewPipelineHandler(videoJobRepo, publishRepo)
+	productHandler := handler.NewProductHandler(productUC)
 	autoPilotHandler := handler.NewAutoPilotHandler(autoPilotUC)
 
 	// ─── Router ──────────────────────────────────────────────────────────────
@@ -108,10 +113,10 @@ func main() {
 		auth := v1.Group("/auth")
 		{
 			auth.POST("/register", authHandler.Register)
-			auth.POST("/login",    authHandler.Login)
-			auth.POST("/refresh",  authHandler.Refresh)
-			auth.GET("/me",              middleware.Auth(cfg.Auth.JWTSecret), authHandler.Me)
-			auth.PUT("/profile",         middleware.Auth(cfg.Auth.JWTSecret), authHandler.UpdateProfile)
+			auth.POST("/login", authHandler.Login)
+			auth.POST("/refresh", authHandler.Refresh)
+			auth.GET("/me", middleware.Auth(cfg.Auth.JWTSecret), authHandler.Me)
+			auth.PUT("/profile", middleware.Auth(cfg.Auth.JWTSecret), authHandler.UpdateProfile)
 			auth.PUT("/change-password", middleware.Auth(cfg.Auth.JWTSecret), authHandler.ChangePassword)
 		}
 
@@ -120,39 +125,40 @@ func main() {
 			// ─── Channels ────────────────────────────────────────────────────
 			ch := protected.Group("/channels")
 			{
-				ch.GET("",                   channelHandler.List)
+				ch.GET("", channelHandler.List)
 				ch.GET("/connect/:platform", channelHandler.GetAuthURL)
-				ch.GET("/facebook/pages",    channelHandler.ListFacebookPages)
-				ch.POST("/oauth/tiktok",     channelHandler.ConnectTikTok)
-				ch.POST("/oauth/facebook",   channelHandler.ConnectFacebook)
-				ch.DELETE("/:id",            channelHandler.Delete)
-				ch.PUT("/:id/toggle",        channelHandler.Toggle)
+				ch.GET("/facebook/pages", channelHandler.ListFacebookPages)
+				ch.POST("/oauth/tiktok", channelHandler.ConnectTikTok)
+				ch.POST("/oauth/facebook", channelHandler.ConnectFacebook)
+				ch.POST("/oauth/youtube", channelHandler.ConnectYouTube)
+				ch.DELETE("/:id", channelHandler.Delete)
+				ch.PUT("/:id/toggle", channelHandler.Toggle)
 			}
 
 			// ─── Content ─────────────────────────────────────────────────────
 			ct := protected.Group("/content")
 			{
-				ct.GET("",                      contentHandler.ListPlans)
-				ct.POST("",                     contentHandler.CreateFromTrend)
-				ct.GET("/:id",                  contentHandler.GetPlan)
-				ct.PUT("/:id",                  contentHandler.UpdatePlan)
-				ct.POST("/:id/approve",         contentHandler.ApprovePlan)
-				ct.POST("/:id/reject",          contentHandler.RejectPlan)
+				ct.GET("", contentHandler.ListPlans)
+				ct.POST("", contentHandler.CreateFromTrend)
+				ct.GET("/:id", contentHandler.GetPlan)
+				ct.PUT("/:id", contentHandler.UpdatePlan)
+				ct.POST("/:id/approve", contentHandler.ApprovePlan)
+				ct.POST("/:id/reject", contentHandler.RejectPlan)
 				ct.POST("/:id/generate-script", contentHandler.RegenerateScript)
-				ct.DELETE("/:id",               contentHandler.DeletePlan)
+				ct.DELETE("/:id", contentHandler.DeletePlan)
 			}
-			protected.GET("/trends",                 contentHandler.ListTrends)
-			protected.POST("/trends/discover",       contentHandler.TriggerDiscover)
-			protected.POST("/trends/bulk-reject",    contentHandler.BulkRejectTrends)
-			ct.POST("/bulk-action",                  contentHandler.BulkActionPlans)
+			protected.GET("/trends", contentHandler.ListTrends)
+			protected.POST("/trends/discover", contentHandler.TriggerDiscover)
+			protected.POST("/trends/bulk-reject", contentHandler.BulkRejectTrends)
+			ct.POST("/bulk-action", contentHandler.BulkActionPlans)
 
 			// ─── Videos ──────────────────────────────────────────────────────
 			vid := protected.Group("/videos")
 			{
-				vid.GET("",              videoHandler.List)
-				vid.GET("/:id",          videoHandler.Get)
-				vid.DELETE("/:id",       videoHandler.Delete)
-				vid.POST("/:id/retry",   videoHandler.Retry)
+				vid.GET("", videoHandler.List)
+				vid.GET("/:id", videoHandler.Get)
+				vid.DELETE("/:id", videoHandler.Delete)
+				vid.POST("/:id/retry", videoHandler.Retry)
 				vid.GET("/:id/download", videoHandler.GetDownloadURL)
 			}
 
@@ -162,19 +168,19 @@ func main() {
 			// ─── Publish ─────────────────────────────────────────────────────
 			pub := protected.Group("/publish")
 			{
-				pub.GET("",              publishHandler.List)
-				pub.POST("",             publishHandler.Create)
-				pub.GET("/:id",          publishHandler.Get)
-				pub.PUT("/:id",          publishHandler.Update)
-				pub.DELETE("/:id",       publishHandler.Cancel)
+				pub.GET("", publishHandler.List)
+				pub.POST("", publishHandler.Create)
+				pub.GET("/:id", publishHandler.Get)
+				pub.PUT("/:id", publishHandler.Update)
+				pub.DELETE("/:id", publishHandler.Cancel)
 				pub.POST("/:id/publish-now", publishHandler.PublishNow)
 			}
 			protected.GET("/calendar", publishHandler.Calendar)
 
 			// ─── Analytics ───────────────────────────────────────────────────
-			protected.GET("/analytics/overview",    analyticsHandler.Overview)
-			protected.GET("/analytics/posts",       analyticsHandler.ListPosts)
-			protected.GET("/analytics/timeseries",  analyticsHandler.Timeseries)
+			protected.GET("/analytics/overview", analyticsHandler.Overview)
+			protected.GET("/analytics/posts", analyticsHandler.ListPosts)
+			protected.GET("/analytics/timeseries", analyticsHandler.Timeseries)
 
 			protected.GET("/pipeline/status", pipelineHandler.Status)
 
@@ -184,25 +190,26 @@ func main() {
 			// ─── Products (shop catalog) ──────────────────────────────────────
 			prod := protected.Group("/products")
 			{
-				prod.GET("",        productHandler.List)
-				prod.POST("",       productHandler.Create)
-				prod.GET("/:id",    productHandler.Get)
+				prod.GET("", productHandler.List)
+				prod.POST("", productHandler.Create)
+				prod.GET("/:id", productHandler.Get)
 				prod.DELETE("/:id", productHandler.Delete)
-				prod.POST("/sync",  productHandler.Sync)
+				prod.POST("/sync", productHandler.Sync)
 			}
-			pub.GET("/:id/products",  productHandler.ListByPublishJob)
+			pub.GET("/:id/products", productHandler.ListByPublishJob)
 			pub.POST("/:id/products", productHandler.TagPublishJob)
 
 			// ─── Auto Pilot ──────────────────────────────────────────────────
 			ap := protected.Group("/auto-pilot")
 			{
-				ap.GET("",              autoPilotHandler.List)
-				ap.POST("",             autoPilotHandler.Create)
-				ap.GET("/:id",          autoPilotHandler.Get)
-				ap.PUT("/:id",          autoPilotHandler.Update)
-				ap.PUT("/:id/toggle",   autoPilotHandler.Toggle)
-				ap.DELETE("/:id",       autoPilotHandler.Delete)
-				ap.POST("/:id/run",     autoPilotHandler.RunNow)
+				ap.GET("", autoPilotHandler.List)
+				ap.POST("", autoPilotHandler.Create)
+				ap.POST("/quick-setup", autoPilotHandler.QuickSetup)
+				ap.GET("/:id", autoPilotHandler.Get)
+				ap.PUT("/:id", autoPilotHandler.Update)
+				ap.PUT("/:id/toggle", autoPilotHandler.Toggle)
+				ap.DELETE("/:id", autoPilotHandler.Delete)
+				ap.POST("/:id/run", autoPilotHandler.RunNow)
 			}
 		}
 	}
@@ -235,3 +242,18 @@ func main() {
 	logger.Info("server stopped")
 }
 
+// buildScriptGenerator selects the AI provider from config and optionally wraps
+// it with a mock fallback. Mirrors cmd/worker/main.go.
+func buildScriptGenerator(cfg *config.Config) ai.ScriptGenerator {
+	var gen ai.ScriptGenerator
+	switch cfg.AI.Provider {
+	case "mock":
+		return mockai.New()
+	default:
+		gen = gemini.New(cfg.Gemini)
+	}
+	if cfg.AI.FallbackToMock {
+		gen = aifallback.New(gen, mockai.New())
+	}
+	return gen
+}
