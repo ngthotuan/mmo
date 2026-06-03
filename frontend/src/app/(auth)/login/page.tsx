@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Zap, Loader2, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,12 +11,24 @@ import { authApi } from "@/lib/api/auth";
 export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<"login" | "register">("login");
+  const [signupEnabled, setSignupEnabled] = useState(true);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Hide the sign-up option when registration is closed by the server.
+  useEffect(() => {
+    authApi
+      .signupStatus()
+      .then((enabled) => {
+        setSignupEnabled(enabled);
+        if (!enabled) setMode("login");
+      })
+      .catch(() => setSignupEnabled(false));
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -143,31 +155,33 @@ export default function LoginPage() {
               {mode === "login" ? "Sign In" : "Create Account"}
             </Button>
 
-            <p className="text-center text-sm text-slate-400">
-              {mode === "login" ? (
-                <>
-                  Don&apos;t have an account?{" "}
-                  <button
-                    type="button"
-                    className="text-violet-400 hover:text-violet-300 underline-offset-4 hover:underline transition-colors"
-                    onClick={() => setMode("register")}
-                  >
-                    Sign up
-                  </button>
-                </>
-              ) : (
-                <>
-                  Already have an account?{" "}
-                  <button
-                    type="button"
-                    className="text-violet-400 hover:text-violet-300 underline-offset-4 hover:underline transition-colors"
-                    onClick={() => setMode("login")}
-                  >
-                    Sign in
-                  </button>
-                </>
-              )}
-            </p>
+            {signupEnabled && (
+              <p className="text-center text-sm text-slate-400">
+                {mode === "login" ? (
+                  <>
+                    Don&apos;t have an account?{" "}
+                    <button
+                      type="button"
+                      className="text-violet-400 hover:text-violet-300 underline-offset-4 hover:underline transition-colors"
+                      onClick={() => setMode("register")}
+                    >
+                      Sign up
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    Already have an account?{" "}
+                    <button
+                      type="button"
+                      className="text-violet-400 hover:text-violet-300 underline-offset-4 hover:underline transition-colors"
+                      onClick={() => setMode("login")}
+                    >
+                      Sign in
+                    </button>
+                  </>
+                )}
+              </p>
+            )}
           </form>
         </div>
       </div>

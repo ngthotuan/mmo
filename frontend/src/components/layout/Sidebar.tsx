@@ -15,6 +15,7 @@ import {
   ShoppingBag,
   Send,
   Bot,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { authApi } from "@/lib/api/auth";
@@ -60,6 +61,14 @@ const navGroups: { label: string; items: NavItem[] }[] = [
   },
 ];
 
+// Nav groups shown only to admins.
+const adminNavGroups: { label: string; items: NavItem[] }[] = [
+  {
+    label: "Administration",
+    items: [{ href: "/admin/users", label: "Users", icon: Users }],
+  },
+];
+
 export function Sidebar() {
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
@@ -68,6 +77,9 @@ export function Sidebar() {
     if (exact) return pathname === href;
     return pathname === href || pathname.startsWith(href + "/");
   };
+
+  const groups =
+    user?.role === "admin" ? [...navGroups, ...adminNavGroups] : navGroups;
 
   return (
     <aside className="flex h-screen w-60 shrink-0 flex-col bg-slate-900">
@@ -84,7 +96,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 py-4">
-        {navGroups.map((group) => (
+        {groups.map((group) => (
           <div key={group.label}>
             <p className="mb-1 px-3 text-xs font-semibold uppercase tracking-wider text-slate-600">
               {group.label}
@@ -152,7 +164,12 @@ export function Sidebar() {
             <p className="truncate text-xs font-medium text-slate-200">
               {user?.name || user?.email?.split("@")[0]}
             </p>
-            <p className="truncate text-xs text-slate-500">{user?.email}</p>
+            <p className="truncate text-xs text-slate-500">
+              {user?.email}
+              {user?.role && (
+                <span className="ml-1 capitalize text-slate-600">· {user.role}</span>
+              )}
+            </p>
           </div>
           <button
             onClick={() => authApi.logout()}

@@ -14,6 +14,7 @@ import (
 	"mmo/internal/adapter/handler"
 	"mmo/internal/adapter/repository"
 	"mmo/internal/domain/ai"
+	"mmo/internal/domain/user"
 	infradb "mmo/internal/infrastructure/db"
 	infraqueue "mmo/internal/infrastructure/queue"
 	"mmo/internal/infrastructure/storage"
@@ -54,6 +55,7 @@ func main() {
 	analyticsRepo := repository.NewAnalyticsRepo(db)
 	productRepo := repository.NewProductRepo(db)
 	autoPilotRepo := repository.NewAutoPilotRepo(db)
+	userRepo := repository.NewUserRepo(db)
 
 	// ─── Infrastructure ───────────────────────────────────────────────────────
 	r2, err := storage.NewR2(cfg.R2)
@@ -87,10 +89,11 @@ func main() {
 	analyticsUC := usecase.NewAnalyticsUsecase(analyticsRepo)
 	productUC := usecase.NewProductUsecase(productRepo, channelRepo, tiktokClient, facebookClient, cfg.Auth.EncryptionKey)
 	autoPilotUC := usecase.NewAutoPilotUsecase(autoPilotRepo, trendRepo, contentPlanRepo, channelRepo, scriptGen, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language, cfg.AutoPilot.TickBatchSize)
+	adminUC := usecase.NewAdminUsecase(userRepo)
 
 	// ─── Handlers ────────────────────────────────────────────────────────────
 	healthHandler := handler.NewHealthHandler(db)
-	authHandler := handler.NewAuthHandler(db, cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)
+	authHandler := handler.NewAuthHandler(db, cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL, cfg.Auth.EnableSignup)
 	channelHandler := handler.NewChannelHandler(channelUC)
 	contentHandler := handler.NewContentHandler(contentUC)
 	videoHandler := handler.NewVideoHandler(videoUC)
@@ -99,6 +102,7 @@ func main() {
 	pipelineHandler := handler.NewPipelineHandler(videoJobRepo, publishRepo)
 	productHandler := handler.NewProductHandler(productUC)
 	autoPilotHandler := handler.NewAutoPilotHandler(autoPilotUC)
+	adminHandler := handler.NewAdminHandler(adminUC)
 
 	// ─── Router ──────────────────────────────────────────────────────────────
 	r := gin.New()
@@ -115,12 +119,22 @@ func main() {
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/refresh", authHandler.Refresh)
+			auth.GET("/signup-status", authHandler.SignupStatus)
 			auth.GET("/me", middleware.Auth(cfg.Auth.JWTSecret), authHandler.Me)
 			auth.PUT("/profile", middleware.Auth(cfg.Auth.JWTSecret), authHandler.UpdateProfile)
 			auth.PUT("/change-password", middleware.Auth(cfg.Auth.JWTSecret), authHandler.ChangePassword)
 		}
 
-		protected := v1.Group("", middleware.Auth(cfg.Auth.JWTSecret))
+		// ─── Admin (user management — admin role only) ───────────────────────
+		admin := v1.Group("/admin", middleware.Auth(cfg.Auth.JWTSecret), middleware.RequireRole(user.RoleAdmin))
+		{
+			admin.GET("/users", adminHandler.ListUsers)
+			admin.PUT("/users/:id/role", adminHandler.UpdateUserRole)
+		}
+
+		// Authenticated routes. RequireFullAccess lets viewers read (GET) but
+		// blocks writes (POST/PUT/PATCH/DELETE) unless they are admin/member.
+		protected := v1.Group("", middleware.Auth(cfg.Auth.JWTSecret), middleware.RequireFullAccess(user.HasFullAccess))
 		{
 			// ─── Channels ────────────────────────────────────────────────────
 			ch := protected.Group("/channels")

@@ -25,6 +25,9 @@ auth:
   encryption_key: "${ENCRYPTION_KEY}"
   access_token_ttl: "15m"
   refresh_token_ttl: "168h"
+  # Allow public account registration. Set ENABLE_SIGNUP=false to close sign-ups.
+  # The very first account can always register (it is bootstrapped as admin).
+  enable_signup: "${ENABLE_SIGNUP:-true}"
 
 r2:
   account_id: "${R2_ACCOUNT_ID}"

@@ -25,13 +25,21 @@ export type PublishJobStatus =
   | "failed"
   | "cancelled";
 
+export type Role = "admin" | "member" | "viewer";
+
 export interface User {
   id: string;
   email: string;
   name: string;
-  role: string;
+  role: Role;
   created_at: string;
+  updated_at?: string;
 }
+
+// Roles allowed to use mutating (write) features. Viewers are read-only.
+export const FULL_ACCESS_ROLES: Role[] = ["admin", "member"];
+export const hasFullAccess = (role?: Role | string): boolean =>
+  role === "admin" || role === "member";
 
 export interface Channel {
   id: string;

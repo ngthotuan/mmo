@@ -72,6 +72,7 @@ type AuthConfig struct {
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 	EncryptionKey   string
+	EnableSignup    bool
 }
 
 type R2Config struct {
@@ -314,6 +315,7 @@ type rawAuth struct {
 	EncryptionKey   string `yaml:"encryption_key"`
 	AccessTokenTTL  string `yaml:"access_token_ttl"`
 	RefreshTokenTTL string `yaml:"refresh_token_ttl"`
+	EnableSignup    string `yaml:"enable_signup"`
 }
 
 type rawR2 struct {
@@ -538,6 +540,7 @@ func Load() *Config {
 			AccessTokenTTL:  mustDuration(raw.Auth.AccessTokenTTL, "auth.access_token_ttl"),
 			RefreshTokenTTL: mustDuration(raw.Auth.RefreshTokenTTL, "auth.refresh_token_ttl"),
 			EncryptionKey:   mustField(raw.Auth.EncryptionKey, "auth.encryption_key"),
+			EnableSignup:    raw.Auth.EnableSignup != "false",
 		},
 		R2: R2Config{
 			AccountID:       raw.R2.AccountID,

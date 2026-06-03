@@ -10,26 +10,29 @@ import (
 	"github.com/jmoiron/sqlx"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
+	"mmo/internal/domain/user"
 	apperr "mmo/pkg/errors"
 	"mmo/pkg/logger"
 	"mmo/pkg/middleware"
 )
 
 type AuthHandler struct {
-	db         *sqlx.DB
-	jwtSecret  string
-	accessTTL  time.Duration
-	refreshTTL time.Duration
-	log        *zap.Logger
+	db           *sqlx.DB
+	jwtSecret    string
+	accessTTL    time.Duration
+	refreshTTL   time.Duration
+	enableSignup bool
+	log          *zap.Logger
 }
 
-func NewAuthHandler(db *sqlx.DB, jwtSecret string, accessTTL, refreshTTL time.Duration) *AuthHandler {
+func NewAuthHandler(db *sqlx.DB, jwtSecret string, accessTTL, refreshTTL time.Duration, enableSignup bool) *AuthHandler {
 	return &AuthHandler{
-		db:         db,
-		jwtSecret:  jwtSecret,
-		accessTTL:  accessTTL,
-		refreshTTL: refreshTTL,
-		log:        logger.Get(),
+		db:           db,
+		jwtSecret:    jwtSecret,
+		accessTTL:    accessTTL,
+		refreshTTL:   refreshTTL,
+		enableSignup: enableSignup,
+		log:          logger.Get(),
 	}
 }
 
@@ -57,6 +60,23 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	// The first account ever created is bootstrapped as admin and may always
+	// register. Subsequent sign-ups require ENABLE_SIGNUP and default to viewer.
+	var userCount int
+	if err := h.db.QueryRowContext(c.Request.Context(), `SELECT COUNT(*) FROM users`).Scan(&userCount); err != nil {
+		h.log.Error("register: count users failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, apperr.ErrInternalServer)
+		return
+	}
+	if userCount > 0 && !h.enableSignup {
+		c.JSON(http.StatusForbidden, apperr.New(http.StatusForbidden, "sign-up is currently disabled"))
+		return
+	}
+	role := user.RoleViewer
+	if userCount == 0 {
+		role = user.RoleAdmin
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		h.log.Error("register: bcrypt failed", zap.Error(err))
@@ -66,8 +86,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	var userID uuid.UUID
 	err = h.db.QueryRowContext(c.Request.Context(),
-		`INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3) RETURNING id`,
-		req.Email, string(hash), req.Name,
+		`INSERT INTO users (email, password_hash, name, role) VALUES ($1, $2, $3, $4) RETURNING id`,
+		req.Email, string(hash), req.Name, role,
 	).Scan(&userID)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -79,7 +99,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	tokens, err := h.generateTokens(userID.String(), req.Email, "owner")
+	tokens, err := h.generateTokens(userID.String(), req.Email, role)
 	if err != nil {
 		h.log.Error("register: generate tokens failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, apperr.ErrInternalServer)
@@ -87,6 +107,19 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, tokens)
+}
+
+// SignupStatus reports whether public registration is open. The very first
+// account can always register (bootstrapped as admin), so signup is reported
+// open while there are zero users even if ENABLE_SIGNUP is false.
+func (h *AuthHandler) SignupStatus(c *gin.Context) {
+	var userCount int
+	if err := h.db.QueryRowContext(c.Request.Context(), `SELECT COUNT(*) FROM users`).Scan(&userCount); err != nil {
+		h.log.Error("signup status: count users failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, apperr.ErrInternalServer)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"enabled": h.enableSignup || userCount == 0})
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {

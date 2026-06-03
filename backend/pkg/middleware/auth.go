@@ -76,6 +76,51 @@ func AuthSSE(jwtSecret string) gin.HandlerFunc {
 	}
 }
 
+// RequireRole aborts with 403 unless the authenticated user has one of the
+// given roles. Must run after Auth().
+func RequireRole(roles ...string) gin.HandlerFunc {
+	allowed := make(map[string]struct{}, len(roles))
+	for _, r := range roles {
+		allowed[r] = struct{}{}
+	}
+	return func(c *gin.Context) {
+		claims := GetClaims(c)
+		if claims == nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, apperr.ErrUnauthorized)
+			return
+		}
+		if _, ok := allowed[claims.Role]; !ok {
+			c.AbortWithStatusJSON(http.StatusForbidden, apperr.ErrForbidden)
+			return
+		}
+		c.Next()
+	}
+}
+
+// RequireFullAccess allows read-only (GET/HEAD/OPTIONS) requests for everyone but
+// restricts mutating requests to roles with full access (admin/member). This is
+// how view-only accounts are enforced across the whole API. Must run after Auth().
+func RequireFullAccess(hasFullAccess func(role string) bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch c.Request.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			c.Next()
+			return
+		}
+		claims := GetClaims(c)
+		if claims == nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, apperr.ErrUnauthorized)
+			return
+		}
+		if !hasFullAccess(claims.Role) {
+			c.AbortWithStatusJSON(http.StatusForbidden,
+				apperr.New(http.StatusForbidden, "your account has view-only access; ask an admin to grant full access"))
+			return
+		}
+		c.Next()
+	}
+}
+
 func GetClaims(c *gin.Context) *Claims {
 	v, _ := c.Get(claimsKey)
 	claims, _ := v.(*Claims)

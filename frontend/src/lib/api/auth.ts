@@ -34,6 +34,13 @@ export const authApi = {
     return data;
   },
 
+  signupStatus: async (): Promise<boolean> => {
+    const { data } = await apiClient.get<{ enabled: boolean }>(
+      "/api/v1/auth/signup-status"
+    );
+    return data.enabled;
+  },
+
   updateProfile: async (name: string): Promise<void> => {
     await apiClient.put("/api/v1/auth/profile", { name });
   },
