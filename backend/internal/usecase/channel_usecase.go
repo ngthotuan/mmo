@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
@@ -196,7 +197,10 @@ func (uc *ChannelUsecase) ConnectFacebook(ctx context.Context, userID uuid.UUID,
 	// Get page-specific token using the already-exchanged long-lived user token
 	page, err := uc.facebook.GetPageToken(ctx, userToken, pageID)
 	if err != nil {
-		return nil, fmt.Errorf("facebook page token: %w", err)
+		// Token expired/under-scoped, wrong page, or the page is not in the
+		// user's accounts — all are caller-fixable, so surface as 400 with the
+		// underlying reason instead of a generic 500.
+		return nil, apperr.New(http.StatusBadRequest, "Facebook: "+err.Error())
 	}
 
 	encAccess, err := crypto.Encrypt(uc.cryptoKey, page.AccessToken)
@@ -243,15 +247,15 @@ func (uc *ChannelUsecase) ConnectFacebook(ctx context.Context, userID uuid.UUID,
 func (uc *ChannelUsecase) GetFacebookPages(ctx context.Context, code string) ([]facebook.Page, string, error) {
 	tokens, err := uc.facebook.ExchangeCode(ctx, code)
 	if err != nil {
-		return nil, "", err
+		return nil, "", apperr.New(http.StatusBadRequest, "Facebook: "+err.Error())
 	}
 	longLived, err := uc.facebook.GetLongLivedToken(ctx, tokens.AccessToken)
 	if err != nil {
-		return nil, "", err
+		return nil, "", apperr.New(http.StatusBadRequest, "Facebook: "+err.Error())
 	}
 	pages, err := uc.facebook.ListPages(ctx, longLived)
 	if err != nil {
-		return nil, "", err
+		return nil, "", apperr.New(http.StatusBadRequest, "Facebook: "+err.Error())
 	}
 	return pages, longLived, nil
 }

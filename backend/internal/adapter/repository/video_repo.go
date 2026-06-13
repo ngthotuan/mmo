@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -23,7 +24,7 @@ const videoJobSelect = `
 	COALESCE(ffmpeg_log,'') AS ffmpeg_log,
 	retry_count,
 	COALESCE(error_message,'') AS error_message,
-	started_at, completed_at, created_at, updated_at`
+	started_at, completed_at, r2_deleted_at, created_at, updated_at`
 
 type VideoJobRepo struct{ db *sqlx.DB }
 
@@ -116,6 +117,44 @@ func (r *VideoJobRepo) Delete(ctx context.Context, id uuid.UUID) error {
 		return apperr.ErrNotFound
 	}
 	return nil
+}
+
+// ListR2CleanupTargets returns video jobs whose R2 artifacts are safe to delete:
+// the video has been published to every target channel, the most recent publish
+// is older than the retention cutoff, and no publish still needs the file
+// (nothing scheduled/publishing, and no failed publish still within its retry
+// budget). Jobs already purged (r2_deleted_at set) or with no file are skipped.
+func (r *VideoJobRepo) ListR2CleanupTargets(ctx context.Context, cutoff time.Time, maxAttempts int, limit int) ([]*video.Job, error) {
+	jobs := make([]*video.Job, 0)
+	err := r.db.SelectContext(ctx, &jobs, `
+		SELECT `+videoJobSelect+` FROM video_jobs vj
+		WHERE vj.output_video_key <> ''
+		  AND vj.r2_deleted_at IS NULL
+		  AND EXISTS (
+		      SELECT 1 FROM publish_jobs pj
+		      WHERE pj.video_job_id = vj.id AND pj.status = 'published'
+		  )
+		  AND NOT EXISTS (
+		      SELECT 1 FROM publish_jobs pj
+		      WHERE pj.video_job_id = vj.id
+		        AND (
+		            (pj.status = 'published' AND (pj.published_at IS NULL OR pj.published_at > $1))
+		            OR pj.status IN ('scheduled','publishing')
+		            OR (pj.status = 'failed' AND pj.retry_count < $2)
+		        )
+		  )
+		ORDER BY vj.created_at
+		LIMIT $3`,
+		cutoff, maxAttempts, limit,
+	)
+	return jobs, err
+}
+
+// MarkR2Deleted records that a video job's R2 artifacts have been purged.
+func (r *VideoJobRepo) MarkR2Deleted(ctx context.Context, id uuid.UUID, at time.Time) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE video_jobs SET r2_deleted_at=$1 WHERE id=$2`, at, id)
+	return err
 }
 
 func (r *VideoJobRepo) GetByContentPlanID(ctx context.Context, planID uuid.UUID) (*video.Job, error) {

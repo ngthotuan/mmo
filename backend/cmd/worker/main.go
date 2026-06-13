@@ -93,6 +93,7 @@ func main() {
 	analyticsSyncHandler := workerhandler.NewAnalyticsSyncHandler(publishRepo, channelRepo, analyticsRepo, tiktokClient, facebookClient, ytPublishClient, cfg.Auth.EncryptionKey)
 	autoPilotUC := usecase.NewAutoPilotUsecase(autoPilotRepo, trendRepo, planRepo, channelRepo, scriptGen, queueClient, cfg.Video.TargetDurationSecs, cfg.Content.Language, cfg.AutoPilot.TickBatchSize)
 	autoPilotHandler := workerhandler.NewAutoPilotTickHandler(autoPilotUC)
+	deleteR2Handler := workerhandler.NewDeleteR2VideosHandler(videoJobRepo, r2, cfg.Publish.VideoRetention, cfg.Publish.MaxRetryAttempts)
 
 	// ─── Asynq server ────────────────────────────────────────────────────────
 	srv := queue.NewServer(cfg.Redis.URL, *videoOnly, cfg.Queue)
@@ -114,6 +115,7 @@ func main() {
 		mux.HandleFunc(queue.TaskRetryPublish, retryPublishHandler.ProcessTask)
 		mux.HandleFunc(queue.TaskSyncAnalytics, analyticsSyncHandler.ProcessTask)
 		mux.HandleFunc(queue.TaskAutoPilotTick, autoPilotHandler.ProcessTask)
+		mux.HandleFunc(queue.TaskDeleteR2Videos, deleteR2Handler.ProcessTask)
 	}
 
 	// ─── Cron scheduler (non-video worker only) ───────────────────────────────
@@ -132,6 +134,7 @@ func main() {
 			{cfg.Schedule.SyncAnalytics, queue.TaskSyncAnalytics, queue.QueueLow},
 			{cfg.Schedule.RefreshTokens, queue.TaskRefreshTokens, queue.QueueLow},
 			{cfg.Schedule.AutoPilotTick, queue.TaskAutoPilotTick, queue.QueueLow},
+			{cfg.Schedule.DeleteR2Videos, queue.TaskDeleteR2Videos, queue.QueueLow},
 		}
 		for _, s := range schedules {
 			if _, err := scheduler.Register(s.cron,

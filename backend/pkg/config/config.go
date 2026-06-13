@@ -226,6 +226,7 @@ type ScheduleConfig struct {
 	RefreshTokens  string
 	AutoPilotTick  string
 	RetryPublish   string
+	DeleteR2Videos string
 }
 
 type ChannelConfig struct {
@@ -236,6 +237,7 @@ type PublishConfig struct {
 	MinScheduleBeforeNow time.Duration
 	DryRun               bool // global override: mock ALL publishes (no real API calls)
 	MaxRetryAttempts     int
+	VideoRetention       time.Duration // how long to keep a published video's R2 file before the cleanup job deletes it
 }
 
 type AutoPilotConfig struct {
@@ -464,6 +466,7 @@ type rawSchedule struct {
 	RefreshTokens  string `yaml:"refresh_tokens"`
 	AutoPilotTick  string `yaml:"auto_pilot_tick"`
 	RetryPublish   string `yaml:"retry_publish"`
+	DeleteR2Videos string `yaml:"delete_r2_videos"`
 }
 
 type rawChannel struct {
@@ -474,6 +477,7 @@ type rawPublish struct {
 	MinScheduleBeforeNow string `yaml:"min_schedule_before_now"`
 	DryRun               string `yaml:"dry_run"`
 	MaxRetryAttempts     int    `yaml:"max_retry_attempts"`
+	VideoRetention       string `yaml:"video_retention"`
 }
 
 type rawAutoPilot struct {
@@ -665,6 +669,7 @@ func Load() *Config {
 			RefreshTokens:  raw.Schedule.RefreshTokens,
 			AutoPilotTick:  raw.Schedule.AutoPilotTick,
 			RetryPublish:   defaultStr(raw.Schedule.RetryPublish, "*/5 * * * *"),
+			DeleteR2Videos: defaultStr(raw.Schedule.DeleteR2Videos, "0 * * * *"),
 		},
 		Channel: ChannelConfig{
 			FacebookTokenExpiry: mustDuration(raw.Channel.FacebookTokenExpiry, "channel.facebook_token_expiry"),
@@ -673,6 +678,7 @@ func Load() *Config {
 			MinScheduleBeforeNow: mustDuration(raw.Publish.MinScheduleBeforeNow, "publish.min_schedule_before_now"),
 			DryRun:               raw.Publish.DryRun == "true",
 			MaxRetryAttempts:     raw.Publish.MaxRetryAttempts,
+			VideoRetention:       mustDuration(defaultStr(raw.Publish.VideoRetention, "48h"), "publish.video_retention"),
 		},
 		AutoPilot: AutoPilotConfig{
 			TickBatchSize: raw.AutoPilot.TickBatchSize,

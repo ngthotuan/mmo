@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -34,6 +35,41 @@ type Page struct {
 	Name        string `json:"name"`
 	AccessToken string `json:"access_token"`
 	Picture     string `json:"-"`
+}
+
+// graphError mirrors the error envelope Facebook Graph API returns on failure.
+type graphError struct {
+	Error struct {
+		Message   string `json:"message"`
+		Type      string `json:"type"`
+		Code      int    `json:"code"`
+		FbtraceID string `json:"fbtrace_id"`
+	} `json:"error"`
+}
+
+// parseGraph reads the response body, surfaces any Facebook Graph API error
+// (either a non-2xx status or an `error` envelope on a 200), and otherwise
+// unmarshals the body into out. Pass out=nil to only check for errors.
+//
+// Without this, a Graph error (expired/under-scoped token, invalid page, etc.)
+// decodes to an empty struct and the caller fails later with a misleading
+// generic error that surfaces to the client as HTTP 500.
+func parseGraph(resp *http.Response, out any) error {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var ge graphError
+	if json.Unmarshal(body, &ge) == nil && ge.Error.Message != "" {
+		return fmt.Errorf("graph api error (code %d): %s", ge.Error.Code, ge.Error.Message)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("graph api error: status %d", resp.StatusCode)
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(body, out)
 }
 
 func New(cfg config.FacebookConfig) *Client {
@@ -79,7 +115,7 @@ func (c *Client) ExchangeCode(ctx context.Context, code string) (*Tokens, error)
 	defer resp.Body.Close()
 
 	var tokens Tokens
-	if err := json.NewDecoder(resp.Body).Decode(&tokens); err != nil {
+	if err := parseGraph(resp, &tokens); err != nil {
 		return nil, err
 	}
 	if tokens.AccessToken == "" {
@@ -109,7 +145,7 @@ func (c *Client) GetLongLivedToken(ctx context.Context, shortLived string) (stri
 	var result struct {
 		AccessToken string `json:"access_token"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := parseGraph(resp, &result); err != nil {
 		return "", err
 	}
 	return result.AccessToken, nil
@@ -134,7 +170,7 @@ func (c *Client) ListPages(ctx context.Context, userAccessToken string) ([]Page,
 	var result struct {
 		Data []Page `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := parseGraph(resp, &result); err != nil {
 		return nil, err
 	}
 	return result.Data, nil
@@ -217,7 +253,7 @@ func (c *Client) PostVideo(ctx context.Context, pageToken string, r PostVideoReq
 	var result struct {
 		ID string `json:"id"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := parseGraph(resp, &result); err != nil {
 		return "", err
 	}
 	if result.ID == "" {

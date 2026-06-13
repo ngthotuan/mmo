@@ -157,6 +157,7 @@ schedule:
   refresh_tokens: "0 */12 * * *"
   auto_pilot_tick: "*/15 * * * *"
   retry_publish: "*/5 * * * *"
+  delete_r2_videos: "0 * * * *"   # hourly: purge R2 files of videos published > video_retention ago
 
 channel:
   facebook_token_expiry: "1320h"
@@ -167,6 +168,9 @@ publish:
   # Use for hermetic end-to-end tests. Per-channel dry_run flag also works.
   dry_run: "${PUBLISH_DRY_RUN:-false}"
   max_retry_attempts: 5
+  # video_retention: keep a published video's file on R2 this long, then the
+  # delete_r2_videos cron purges it (only once all its channels are published).
+  video_retention: "48h"
 
 auto_pilot:
   tick_batch_size: 200

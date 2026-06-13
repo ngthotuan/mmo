@@ -38,22 +38,23 @@ type Template struct {
 }
 
 type Job struct {
-	ID             uuid.UUID  `db:"id"`
-	ContentPlanID  uuid.UUID  `db:"content_plan_id"`
-	TemplateID     *uuid.UUID `db:"template_id"`
-	Status         JobStatus  `db:"status"`
-	MediaAssets    []byte     `db:"media_assets"`  // JSONB
-	TTSAudioKey    string     `db:"tts_audio_key"` // R2 object key
-	SubtitleKey    string     `db:"subtitle_key"`
-	OutputVideoKey string     `db:"output_video_key"`
-	OutputVideoURL string     `db:"output_video_url"`
-	DurationSeconds float64   `db:"duration_seconds"`
-	FileSizeBytes  int64      `db:"file_size_bytes"`
-	FFmpegLog      string     `db:"ffmpeg_log"`
-	RetryCount     int        `db:"retry_count"`
-	ErrorMessage   string     `db:"error_message"`
-	StartedAt      *time.Time `db:"started_at"`
-	CompletedAt    *time.Time `db:"completed_at"`
-	CreatedAt      time.Time  `db:"created_at"`
-	UpdatedAt      time.Time  `db:"updated_at"`
+	ID              uuid.UUID  `db:"id"`
+	ContentPlanID   uuid.UUID  `db:"content_plan_id"`
+	TemplateID      *uuid.UUID `db:"template_id"`
+	Status          JobStatus  `db:"status"`
+	MediaAssets     []byte     `db:"media_assets"`  // JSONB
+	TTSAudioKey     string     `db:"tts_audio_key"` // R2 object key
+	SubtitleKey     string     `db:"subtitle_key"`
+	OutputVideoKey  string     `db:"output_video_key"`
+	OutputVideoURL  string     `db:"output_video_url"`
+	DurationSeconds float64    `db:"duration_seconds"`
+	FileSizeBytes   int64      `db:"file_size_bytes"`
+	FFmpegLog       string     `db:"ffmpeg_log"`
+	RetryCount      int        `db:"retry_count"`
+	ErrorMessage    string     `db:"error_message"`
+	StartedAt       *time.Time `db:"started_at"`
+	CompletedAt     *time.Time `db:"completed_at"`
+	R2DeletedAt     *time.Time `db:"r2_deleted_at"` // set once published-video R2 artifacts are purged by the retention job
+	CreatedAt       time.Time  `db:"created_at"`
+	UpdatedAt       time.Time  `db:"updated_at"`
 }
