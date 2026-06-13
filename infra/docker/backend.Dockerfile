@@ -16,10 +16,11 @@ RUN mkdir -p /app/bin && \
 
 COPY . .
 
-# Build api + worker in parallel; both reuse the same module cache.
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/bin/api    ./cmd/api    & \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/bin/worker ./cmd/worker & \
-    wait
+# Build api + worker sequentially. They reuse the same module/build cache, and
+# building one at a time keeps peak memory low (parallel builds can be OOM-killed
+# on small CI runners) while still failing the layer loudly on any compile error.
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/bin/api    ./cmd/api && \
+    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/bin/worker ./cmd/worker
 
 # ─── Shared runtime base ──────────────────────────────────────────────────────
 FROM alpine:3.19 AS runtime-base
